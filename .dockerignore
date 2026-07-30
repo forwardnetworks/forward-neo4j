@@ -1,0 +1,15 @@
+.git
+.github
+.gradle
+.idea
+build
+data
+logs
+plugins
+release
+demo/local
+docs/assets/screenshots
+*.credentials
+*.token
+.env
+.env.*

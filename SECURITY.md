@@ -22,3 +22,9 @@ Forward Networks through the company's established private security channel.
 - Treat imported graph data, Neo4j backups, and logs as environment-sensitive data.
 
 The plugin intentionally refuses HTTP redirects, arbitrary NQE source, and credential input through Cypher procedures.
+
+## Supported use
+
+This repository is a Forward field integration and reference implementation. It is not an officially supported
+Forward product integration. The supported reference path is self-managed Neo4j on a controlled host; AuraDB and
+unattended high-scale scheduling require separate deployment work.

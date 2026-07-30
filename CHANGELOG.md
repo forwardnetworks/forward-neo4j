@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.2.1 - 2026-07-30
+
+- Fix and smoke-test the published Docker build path; require an explicit Neo4j password and loopback-only Compose
+  ports by default.
+- Add atomic plugin installation, live local verification, reproducible JAR settings, Gradle distribution checksum,
+  CycloneDX SBOM generation, release attestations, and published-release verification.
+- Pin GitHub Actions, add dependency update and ownership metadata, and add the Forward MIT license.
+- Emit an NQE provenance envelope for successful zero-row executions and update one projection marker per completed
+  import instead of once per row.
+- Enforce five-second-or-longer polling for non-loopback Forward URLs and require the timeout to exceed the interval.
+- Add read-only current-versus-previous snapshot demo queries.
+
 ## 0.2.0 - 2026-07-30
 
 - Add snapshot-scoped Device and Topology import procedures.

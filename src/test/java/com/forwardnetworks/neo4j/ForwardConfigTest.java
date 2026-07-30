@@ -61,4 +61,27 @@ class ForwardConfigTest {
         assertEquals(true, config.licenseTier().security());
         assertEquals(true, config.licenseTier().predict());
     }
+
+    @Test
+    void rejectsAggressiveNqePollingForRemoteForwardUrl() {
+        Properties properties = new Properties();
+        properties.setProperty("forward.url", "https://fwd.example");
+        properties.setProperty("forward.username", "client-id");
+        properties.setProperty("forward.password", "client-secret");
+        properties.setProperty("forward.nqePollSeconds", "4");
+
+        assertThrows(IllegalStateException.class, () -> ForwardConfig.from(Map.of(), properties));
+    }
+
+    @Test
+    void rejectsNqeTimeoutThatCannotOutlivePollingInterval() {
+        Properties properties = new Properties();
+        properties.setProperty("forward.url", "https://fwd.example");
+        properties.setProperty("forward.username", "client-id");
+        properties.setProperty("forward.password", "client-secret");
+        properties.setProperty("forward.nqePollSeconds", "5");
+        properties.setProperty("forward.nqeTimeoutSeconds", "5");
+
+        assertThrows(IllegalStateException.class, () -> ForwardConfig.from(Map.of(), properties));
+    }
 }

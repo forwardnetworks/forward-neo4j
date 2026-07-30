@@ -53,7 +53,7 @@ The installer refuses broad target paths, verifies the downloaded release SHA-25
 point, and writes only the versioned archive under the selected `NEO4J_HOME/web` directory. Future package upgrades
 should be rechecked because an updated Arch recipe may begin shipping the upstream web archive directly.
 
-Build from source, or download `forward-neo4j-plugin-0.2.0.jar` from the GitHub release:
+Build from source, or download `forward-neo4j-plugin-0.2.1.jar` from the GitHub release:
 
 ```bash
 ./gradlew clean test jar
@@ -64,8 +64,8 @@ Install the plugin and user service:
 ```bash
 install -d -m 0700 ~/.local/state/forward-neo4j/plugins ~/.config/forward-neo4j
 install -d ~/.config/systemd/user
-install -m 0644 build/libs/forward-neo4j-plugin-0.2.0.jar \
-  ~/.local/state/forward-neo4j/plugins/forward-neo4j-plugin.jar
+deploy/install-plugin.sh build/libs/forward-neo4j-plugin-0.2.1.jar \
+  ~/.local/state/forward-neo4j
 install -m 0644 deploy/neo4j.conf ~/.config/forward-neo4j/neo4j.conf
 install -m 0644 deploy/forward-neo4j.service ~/.config/systemd/user/forward-neo4j.service
 install -m 0600 /dev/null ~/.config/forward-neo4j/forward.credentials
@@ -236,17 +236,14 @@ and restrict the firewall further. Never forward ports 7474 or 7687 from an inte
 ## Docker demo
 
 ```bash
+read -rsp 'Neo4j demo password: ' NEO4J_PASSWORD
+export NEO4J_PASSWORD
 docker compose -f demo/compose.yaml up --build
 ```
 
-The container publishes 7474 and 7687. Docker port publishing may interact with host firewall rules differently from a
-native service; bind it to loopback when remote access is not required:
-
-```yaml
-ports:
-  - "127.0.0.1:7474:7474"
-  - "127.0.0.1:7687:7687"
-```
+The Compose file requires an explicit Neo4j password and binds ports 7474 and 7687 to loopback. Deliberately change
+those bindings only when a remote workstation needs access, then apply the same subnet and TLS controls as the native
+service. Docker port publishing may interact with host firewall rules differently from a native service.
 
 Do not mount a workstation credential file unless the exposure is intentional and the file remains protected.
 
@@ -256,11 +253,17 @@ Stop the service only for the short JAR replacement window:
 
 ```bash
 systemctl --user stop forward-neo4j.service
-install -m 0644 forward-neo4j-plugin-NEW.jar \
-  ~/.local/state/forward-neo4j/plugins/forward-neo4j-plugin.jar
+deploy/install-plugin.sh forward-neo4j-plugin-NEW.jar \
+  ~/.local/state/forward-neo4j
 systemctl --user start forward-neo4j.service
+
+read -rsp 'Neo4j password: ' NEO4J_PASSWORD
+export NEO4J_PASSWORD
+deploy/verify-install.sh --forward
+unset NEO4J_PASSWORD
 ```
 
-Retain the previous release JAR until `forward.plugin.info()`, `forward.testConnection()`, and a representative query
-all succeed. Rolling back is the same operation with the previous JAR. A plugin rollback does not automatically revert
-graph schema or imported data.
+The installer validates an adjacent `.sha256` file or `SHA256SUMS` manifest when present, checks the procedure class and
+all four bundled NQEs, uses an atomic rename, and retains the previous plugin as
+`forward-neo4j-plugin.previous.jar`. Keep that rollback copy until `verify-install.sh --forward` and a representative
+query succeed. A plugin rollback does not automatically revert graph schema or imported data.

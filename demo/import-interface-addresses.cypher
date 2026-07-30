@@ -1,6 +1,7 @@
 CALL forward.nqe.stream("interface-addresses-v1", $networkId, $snapshotId)
-YIELD networkId, snapshotId, projection, projectionVersion, projectionSha256, executionKey, row
-CALL (networkId, snapshotId, projection, projectionVersion, projectionSha256, executionKey, row) {
+YIELD networkId, snapshotId, projection, projectionVersion, projectionSha256, executionKey, resultRow, row
+CALL (networkId, snapshotId, row, resultRow) {
+  WITH * WHERE resultRow
   MERGE (network:ForwardNetwork {id: networkId})
   MERGE (snapshot:ForwardSnapshot {networkId: networkId, id: snapshotId})
   MERGE (network)-[:HAS_SNAPSHOT]->(snapshot)
@@ -49,15 +50,19 @@ CALL (networkId, snapshotId, projection, projectionVersion, projectionSha256, ex
     MERGE (device)-[:HAS_NETWORK_INSTANCE]->(instance)
     MERGE (address)-[:IN_NETWORK_INSTANCE]->(instance)
   )
-  MERGE (run:ForwardProjectionRun {
-    networkId: networkId,
-    snapshotId: snapshotId,
-    name: projection,
-    version: projectionVersion,
-    sha256: projectionSha256
-  })
-  SET run.executionKey = executionKey,
-      run.lastImportedAt = datetime()
-  MERGE (snapshot)-[:HAS_PROJECTION]->(run)
 } IN TRANSACTIONS OF 5000 ROWS ON ERROR RETRY FOR 30 SECONDS THEN FAIL
-RETURN count(*) AS importedRows;
+WITH networkId, snapshotId, projection, projectionVersion, projectionSha256, executionKey,
+     count(row) AS importedRows
+MATCH (snapshot:ForwardSnapshot {networkId: networkId, id: snapshotId})
+MERGE (run:ForwardProjectionRun {
+  networkId: networkId,
+  snapshotId: snapshotId,
+  name: projection,
+  version: projectionVersion,
+  sha256: projectionSha256
+})
+SET run.executionKey = executionKey,
+    run.rowsImported = importedRows,
+    run.lastImportedAt = datetime()
+MERGE (snapshot)-[:HAS_PROJECTION]->(run)
+RETURN importedRows;

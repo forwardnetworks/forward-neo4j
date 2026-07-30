@@ -1,9 +1,10 @@
 plugins {
     java
+    id("org.cyclonedx.bom") version "3.3.0"
 }
 
 group = "com.forwardnetworks.neo4j"
-version = "0.2.0"
+version = "0.2.1"
 
 val neo4jVersion = "2026.06.0"
 
@@ -29,6 +30,8 @@ dependencies {
 
 tasks.jar {
     archiveFileName = "forward-neo4j-plugin-${project.version}.jar"
+    isPreserveFileTimestamps = false
+    isReproducibleFileOrder = true
     manifest {
         attributes(
             "Implementation-Title" to "Forward Neo4j Plugin",

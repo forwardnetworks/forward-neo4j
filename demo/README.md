@@ -83,6 +83,9 @@ accepts a curated list of flow maps so callers choose exactly which application 
 For a live local import, use `run-import.sh` and the [customer demo runbook](../docs/CUSTOMER_DEMO.md). The wrapper records
 component states, validates structure, and publishes only with an explicit `--publish` flag.
 
+Once two snapshots have been published, `snapshot-diff.cypher` provides a read-only change demo for device membership,
+BGP session state, Check state and violation counts, and newly observed CVEs.
+
 ## Container build
 
 ```bash
