@@ -74,13 +74,24 @@ esac
 
 plugin_dir="${neo4j_home}/plugins"
 plugin_target="${plugin_dir}/forward-neo4j-plugin.jar"
-previous_target="${plugin_dir}/forward-neo4j-plugin.previous.jar"
+previous_target="${plugin_target}.previous"
+legacy_previous_target="${plugin_dir}/forward-neo4j-plugin.previous.jar"
+legacy_archive_target="${legacy_previous_target}.disabled"
 install -d -m 0755 "${plugin_dir}"
 staged_target=$(mktemp "${plugin_dir}/.forward-neo4j-plugin.XXXXXX")
 cleanup() {
   [[ ! -e ${staged_target} ]] || rm -f -- "${staged_target}"
 }
 trap cleanup EXIT
+
+if [[ -f ${legacy_previous_target} ]]; then
+  [[ ! -e ${legacy_archive_target} ]] || {
+    echo "refusing to overwrite legacy rollback archive: ${legacy_archive_target}" >&2
+    exit 1
+  }
+  mv -- "${legacy_previous_target}" "${legacy_archive_target}"
+  echo "Disabled legacy loadable rollback JAR: ${legacy_archive_target}"
+fi
 
 install -m 0644 "${plugin_source}" "${staged_target}"
 if [[ -f ${plugin_target} ]]; then
