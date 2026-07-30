@@ -17,6 +17,18 @@ With the plugin installed:
 cypher-shell -a bolt://127.0.0.1:7687 -u neo4j --file demo/synthetic-data.cypher
 ```
 
+For public screenshots, use a fresh loopback-only Neo4j home and verify the isolation boundary before opening Browser:
+
+```cypher
+MATCH (node)
+RETURN count(node) AS totalNodes,
+       sum(CASE WHEN node.synthetic = true THEN 1 ELSE 0 END) AS syntheticNodes,
+       collect(DISTINCT node.networkId) AS networkIds;
+```
+
+Proceed only when `totalNodes` equals `syntheticNodes` and `demo-network` is the sole network ID. Do not rely only on a
+query filter when the same database also contains tenant imports.
+
 Explore physical topology:
 
 ```cypher
@@ -25,6 +37,35 @@ MATCH path=(left:ForwardDevice)-[:HAS_INTERFACE]->(:ForwardInterface)
 WHERE left.networkId = "demo-network" AND left.snapshotId = "demo-snapshot"
 RETURN path;
 ```
+
+Explore the release screenshot's correlated topology, application, Check, and CVE view:
+
+```cypher
+MATCH (snapshot:ForwardSnapshot {networkId: "demo-network", id: "demo-snapshot"})
+      -[:CONTAINS]->(device:ForwardDevice)
+OPTIONAL MATCH topology=(device)-[:HAS_INTERFACE]->(:ForwardInterface)
+                        -[:CONNECTED_TO]-(:ForwardInterface)<-[:HAS_INTERFACE]-(peer:ForwardDevice)
+OPTIONAL MATCH (application:ForwardApplication {networkId: "demo-network", id: "sample-checkout"})
+               -[placement:RUNS_ON]->(device)
+OPTIONAL MATCH (vulnerability:ForwardVulnerability {networkId: "demo-network", id: "CVE-2099-0001"})
+               -[risk:AFFECTS]->(device)
+OPTIONAL MATCH (check:ForwardCheckObservation {
+                 networkId: "demo-network", id: "synthetic-edge-redundancy"
+               })-[impact:AFFECTS]->(device)
+RETURN snapshot, device, topology, peer, application, placement, vulnerability, risk, check, impact;
+```
+
+Explore the selectable license profiles and their enabled imports:
+
+```cypher
+MATCH (profile:ForwardLicenseProfile {networkId: "demo-network"})
+      -[selection:ENABLES]->(feature:ForwardIntegrationFeature)
+RETURN profile, selection, feature;
+```
+
+The catalog includes all four bundled async projections. Short display captions keep the graph readable; each feature's
+`id` contains its exact NQE name and its `source` is `nqe-executions`. Base, Network, Security, and combined profiles are
+demo metadata, not a discovered or granted Forward entitlement.
 
 Explore VRFs and BGP observations:
 

@@ -26,8 +26,23 @@ integration—not an export of Forward's internal graph.
 
 ## Screenshots
 
-Release screenshots are generated from `demo/synthetic-data.cypher` in an isolated Neo4j home. They never use an
-existing tenant graph. Synthetic graph and bundled-NQE catalog images will be added before the first release.
+Release screenshots are generated from `demo/synthetic-data.cypher` in a loopback-only Neo4j home whose database
+contains only invented records. They never use a tenant graph, tenant identifiers, or Forward credentials.
+
+### Correlated network, application, and security graph
+
+![Synthetic Forward topology correlated with application, Check, and CVE context](docs/assets/screenshots/synthetic-correlated-graph.png)
+
+Five invented devices and documentation-only IP space demonstrate physical topology, an operator-defined application,
+a curated path observation, one synthetic Check, and `CVE-2099-0001` without representing any customer environment.
+
+### Selectable license and feature catalog
+
+![Synthetic license profiles mapped to enabled Forward integration features](docs/assets/screenshots/license-aware-feature-catalog.png)
+
+Pink nodes are the selectable Base, Network, Security, and combined profiles. Blue nodes are the imports each profile
+enables. The exact bundled projection IDs—`interfaces-v1`, `interface-addresses-v1`, `network-instances-v1`, and
+`bgp-neighbors-v1`—remain stored on the synthetic feature nodes and shipped as reviewable NQE source files.
 
 ## Quick start
 

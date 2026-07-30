@@ -103,6 +103,52 @@ MERGE (run:ForwardProjectionRun {
 SET run.lastImportedAt = datetime(), run.synthetic = true
 MERGE (snapshot)-[:HAS_PROJECTION]->(run);
 
+// Synthetic license catalog used by the public demo and release screenshots.
+// These nodes describe the integration selector; they are not Forward tenant entitlement data.
+UNWIND [
+  {id: "B", name: "Base inventory (B)"},
+  {id: "N-NP", name: "Network (N / NP)"},
+  {id: "S", name: "Security (S)"},
+  {id: "NS-NSP", name: "Network + Security (NS / NSP)"}
+] AS item
+MERGE (profile:ForwardLicenseProfile {networkId: "demo-network", id: item.id})
+SET profile.name = item.name, profile.synthetic = true;
+
+UNWIND [
+  {id: "inventory-topology", name: "Inventory", source: "Devices + Topology APIs", requiredFacet: "BASE"},
+  {id: "interfaces-v1", name: "Interfaces NQE", source: "nqe-executions", requiredFacet: "BASE"},
+  {id: "interface-addresses-v1", name: "Interface IP NQE", source: "nqe-executions", requiredFacet: "BASE"},
+  {id: "network-instances-v1", name: "VRFs NQE", source: "nqe-executions", requiredFacet: "NETWORK"},
+  {id: "bgp-neighbors-v1", name: "BGP NQE", source: "nqe-executions", requiredFacet: "NETWORK"},
+  {id: "checks", name: "Checks", source: "Checks API", requiredFacet: "NETWORK_OR_SECURITY"},
+  {id: "paths", name: "Curated paths", source: "Bulk Path Search API", requiredFacet: "NETWORK_OR_SECURITY"},
+  {id: "vulnerabilities", name: "CVEs", source: "Vulnerability API", requiredFacet: "SECURITY"}
+] AS item
+MERGE (feature:ForwardIntegrationFeature {networkId: "demo-network", id: item.id})
+SET feature.name = item.name,
+    feature.source = item.source,
+    feature.requiredFacet = item.requiredFacet,
+    feature.synthetic = true;
+
+MATCH (:ForwardLicenseProfile {networkId: "demo-network"})
+      -[selection:ENABLES]->(:ForwardIntegrationFeature {networkId: "demo-network"})
+DELETE selection;
+
+UNWIND [
+  {profile: "B", features: ["inventory-topology", "interfaces-v1", "interface-addresses-v1"]},
+  {profile: "N-NP", features: ["inventory-topology", "interfaces-v1", "interface-addresses-v1",
+                                "network-instances-v1", "bgp-neighbors-v1", "checks", "paths"]},
+  {profile: "S", features: ["inventory-topology", "interfaces-v1", "interface-addresses-v1",
+                             "checks", "paths", "vulnerabilities"]},
+  {profile: "NS-NSP", features: ["inventory-topology", "interfaces-v1", "interface-addresses-v1",
+                                  "network-instances-v1", "bgp-neighbors-v1", "checks", "paths",
+                                  "vulnerabilities"]}
+] AS selection
+MATCH (profile:ForwardLicenseProfile {networkId: "demo-network", id: selection.profile})
+UNWIND selection.features AS featureId
+MATCH (feature:ForwardIntegrationFeature {networkId: "demo-network", id: featureId})
+MERGE (profile)-[:ENABLES]->(feature);
+
 UNWIND [
   {component: "inventory", rows: 9},
   {component: "interfaces-v1", rows: 8},

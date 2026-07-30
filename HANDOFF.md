@@ -9,6 +9,8 @@ Prepared: 2026-07-30
 The repository contains a Java 21 Neo4j plugin for publishing selected Forward Networks API results into a
 snapshot-scoped property graph. It uses supported read-only data APIs and Forward's asynchronous NQE execution surface.
 No tenant data, tenant identifiers, credentials, or live-environment screenshots belong in this repository.
+The checked-in screenshots were captured from a second loopback-only Neo4j home containing 58 synthetic nodes and no
+other network ID.
 
 ## Implemented procedure surface
 
@@ -64,6 +66,9 @@ It does not modify Forward network data.
    `ForwardNetwork.currentSnapshotId`.
 10. **Business context is asserted, not inferred.** Applications, owners, criticality, device membership, and flow
     definitions are operator-supplied. Selected Check and CVE detail uses exact Forward identities only.
+11. **Screenshot data is reproducible.** `demo/synthetic-data.cypher` includes the public correlated graph plus four
+    synthetic license-profile nodes and eight integration-feature nodes. Their 24 `ENABLES` relationships document the
+    selector without querying or representing a tenant entitlement.
 
 ## Runtime and security behavior
 
@@ -73,6 +78,8 @@ It does not modify Forward network data.
 - Cancellation from Neo4j is checked during NQE polling and page consumption.
 - Connection tests return no network IDs or names.
 - The deployable service is localhost-only by default. LAN access is an explicit connector plus firewall configuration.
+- The Arch installation path includes a checksum-pinned native Neo4j Browser installer for distributions that omit the
+  `NEO4J_HOME/web` archive.
 
 ## Verification baseline
 
@@ -85,7 +92,8 @@ jar tf build/libs/forward-neo4j-plugin-0.2.0.jar
 ```
 
 The JAR must contain all four `.nqe` resources. Release screenshots must be captured from `demo/synthetic-data.cypher`
-in an isolated Neo4j home, never from an existing graph.
+in an isolated Neo4j home, never from an existing graph. The current capture gate returned 58 total nodes, 58 synthetic
+nodes, and only `demo-network` before the temporary instance was stopped.
 
 ## Known gaps
 
