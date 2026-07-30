@@ -47,7 +47,14 @@ jobs:
             deploy/install-plugin.sh deploy/verify-install.sh
           fixture="$(mktemp -d)"
           deploy/install-plugin.sh "${artifact}" "${fixture}/neo4j"
+          cp "${artifact}" "${fixture}/neo4j/plugins/forward-neo4j-plugin.previous.jar"
+          deploy/install-plugin.sh "${artifact}" "${fixture}/neo4j"
           cmp "${artifact}" "${fixture}/neo4j/plugins/forward-neo4j-plugin.jar"
+          cmp "${artifact}" "${fixture}/neo4j/plugins/forward-neo4j-plugin.jar.previous"
+          test -f "${fixture}/neo4j/plugins/forward-neo4j-plugin.previous.jar.disabled"
+          test ! -e "${fixture}/neo4j/plugins/forward-neo4j-plugin.previous.jar"
+          active_plugins="$(find "${fixture}/neo4j/plugins" -maxdepth 1 -type f -name '*.jar' | wc -l)"
+          test "${active_plugins}" -eq 1
           cp "${sbom}" "build/libs/forward-neo4j-plugin-${version}.cdx.json"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:

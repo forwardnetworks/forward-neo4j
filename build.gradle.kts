@@ -4,7 +4,7 @@ plugins {
 }
 
 group = "com.forwardnetworks.neo4j"
-version = "0.2.1"
+version = "0.2.2"
 
 val neo4jVersion = "2026.06.0"
 

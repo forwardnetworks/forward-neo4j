@@ -265,5 +265,6 @@ unset NEO4J_PASSWORD
 
 The installer validates an adjacent `.sha256` file or `SHA256SUMS` manifest when present, checks the procedure class and
 all four bundled NQEs, uses an atomic rename, and retains the previous plugin as
-`forward-neo4j-plugin.previous.jar`. Keep that rollback copy until `verify-install.sh --forward` and a representative
-query succeed. A plugin rollback does not automatically revert graph schema or imported data.
+`forward-neo4j-plugin.jar.previous`. The non-`.jar` suffix prevents Neo4j from loading the rollback copy alongside the
+active plugin. Keep that rollback copy until `verify-install.sh --forward` and a representative query succeed. A plugin
+rollback does not automatically revert graph schema or imported data.

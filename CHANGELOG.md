@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.2 - 2026-07-30
+
+- Store plugin rollback copies with a non-`.jar` suffix so Neo4j cannot load the previous and active versions together.
+- Migrate the legacy `forward-neo4j-plugin.previous.jar` name to a disabled archive and test that exactly one loadable
+  plugin JAR remains after an upgrade.
+
 ## 0.2.1 - 2026-07-30
 
 - Fix and smoke-test the published Docker build path; require an explicit Neo4j password and loopback-only Compose
