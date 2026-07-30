@@ -54,16 +54,19 @@ jobs:
           connector_zip="build/libs/${connector_zip_name}"
           connector_sbom="build/libs/${connector_sbom_name}"
           test -f "${artifact}"
-          jar tf "${artifact}" | grep -Fx nqe/interfaces-v1.nqe
-          jar tf "${artifact}" | grep -Fx nqe/interface-addresses-v1.nqe
-          jar tf "${artifact}" | grep -Fx nqe/network-instances-v1.nqe
-          jar tf "${artifact}" | grep -Fx nqe/bgp-neighbors-v1.nqe
-          cp build/reports/cyclonedx/bom.json "${sbom}"
+          jar_listing="$(jar tf "${artifact}")"
+          grep -Fxq nqe/interfaces-v1.nqe <<<"${jar_listing}"
+          grep -Fxq nqe/interface-addresses-v1.nqe <<<"${jar_listing}"
+          grep -Fxq nqe/network-instances-v1.nqe <<<"${jar_listing}"
+          grep -Fxq nqe/bgp-neighbors-v1.nqe <<<"${jar_listing}"
+          cp build/reports/cyclonedx-direct/bom.json "${sbom}"
           cp "connector/build/distributions/${connector_tar_name}" "${connector_tar}"
           cp "connector/build/distributions/${connector_zip_name}" "${connector_zip}"
-          cp connector/build/reports/cyclonedx/bom.json "${connector_sbom}"
-          tar -tf "${connector_tar}" | grep -E '/bin/forward-neo4j-connector$'
-          unzip -Z1 "${connector_zip}" | grep -E '/bin/forward-neo4j-connector$'
+          cp connector/build/reports/cyclonedx-direct/bom.json "${connector_sbom}"
+          tar_listing="$(tar -tf "${connector_tar}")"
+          zip_listing="$(unzip -Z1 "${connector_zip}")"
+          grep -Eq '/bin/forward-neo4j-connector$' <<<"${tar_listing}"
+          grep -Eq '/bin/forward-neo4j-connector$' <<<"${zip_listing}"
           (
             cd build/libs
             sha256sum "${artifact_name}" "${sbom_name}" \

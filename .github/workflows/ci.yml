@@ -38,21 +38,24 @@ jobs:
           version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' build.gradle.kts)"
           test -n "${version}"
           artifact="build/libs/forward-neo4j-plugin-${version}.jar"
-          sbom="build/reports/cyclonedx/bom.json"
+          sbom="build/reports/cyclonedx-direct/bom.json"
           connector_tar="connector/build/distributions/forward-neo4j-connector-${version}.tar"
           connector_zip="connector/build/distributions/forward-neo4j-connector-${version}.zip"
-          connector_sbom="connector/build/reports/cyclonedx/bom.json"
+          connector_sbom="connector/build/reports/cyclonedx-direct/bom.json"
           test -f "${artifact}"
           test -s "${sbom}"
           test -s "${connector_tar}"
           test -s "${connector_zip}"
           test -s "${connector_sbom}"
-          tar -tf "${connector_tar}" | grep -E '/bin/forward-neo4j-connector$'
-          unzip -Z1 "${connector_zip}" | grep -E '/bin/forward-neo4j-connector$'
-          jar tf "${artifact}" | grep -Fx nqe/interfaces-v1.nqe
-          jar tf "${artifact}" | grep -Fx nqe/interface-addresses-v1.nqe
-          jar tf "${artifact}" | grep -Fx nqe/network-instances-v1.nqe
-          jar tf "${artifact}" | grep -Fx nqe/bgp-neighbors-v1.nqe
+          tar_listing="$(tar -tf "${connector_tar}")"
+          zip_listing="$(unzip -Z1 "${connector_zip}")"
+          jar_listing="$(jar tf "${artifact}")"
+          grep -Eq '/bin/forward-neo4j-connector$' <<<"${tar_listing}"
+          grep -Eq '/bin/forward-neo4j-connector$' <<<"${zip_listing}"
+          grep -Fxq nqe/interfaces-v1.nqe <<<"${jar_listing}"
+          grep -Fxq nqe/interface-addresses-v1.nqe <<<"${jar_listing}"
+          grep -Fxq nqe/network-instances-v1.nqe <<<"${jar_listing}"
+          grep -Fxq nqe/bgp-neighbors-v1.nqe <<<"${jar_listing}"
           bash -n demo/run-import.sh deploy/install-neo4j-browser.sh \
             deploy/install-plugin.sh deploy/verify-install.sh \
             deploy/export-metrics.sh deploy/run-scheduled-import.sh

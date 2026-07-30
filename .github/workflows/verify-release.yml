@@ -63,9 +63,12 @@ jobs:
           gh attestation verify "${connector_tar}" --repo "${GITHUB_REPOSITORY}"
           gh attestation verify "${connector_zip}" --repo "${GITHUB_REPOSITORY}"
           gh attestation verify "${connector_sbom}" --repo "${GITHUB_REPOSITORY}"
-          tar -tf "${connector_tar}" | grep -E '/bin/forward-neo4j-connector$'
-          unzip -Z1 "${connector_zip}" | grep -E '/bin/forward-neo4j-connector$'
-          jar tf "${artifact}" | grep -Fx nqe/interfaces-v1.nqe
-          jar tf "${artifact}" | grep -Fx nqe/interface-addresses-v1.nqe
-          jar tf "${artifact}" | grep -Fx nqe/network-instances-v1.nqe
-          jar tf "${artifact}" | grep -Fx nqe/bgp-neighbors-v1.nqe
+          tar_listing="$(tar -tf "${connector_tar}")"
+          zip_listing="$(unzip -Z1 "${connector_zip}")"
+          jar_listing="$(jar tf "${artifact}")"
+          grep -Eq '/bin/forward-neo4j-connector$' <<<"${tar_listing}"
+          grep -Eq '/bin/forward-neo4j-connector$' <<<"${zip_listing}"
+          grep -Fxq nqe/interfaces-v1.nqe <<<"${jar_listing}"
+          grep -Fxq nqe/interface-addresses-v1.nqe <<<"${jar_listing}"
+          grep -Fxq nqe/network-instances-v1.nqe <<<"${jar_listing}"
+          grep -Fxq nqe/bgp-neighbors-v1.nqe <<<"${jar_listing}"
