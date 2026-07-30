@@ -18,7 +18,14 @@ import org.neo4j.procedure.TerminationGuard;
 /** Neo4j procedure entry points for the Forward integration. */
 public final class ForwardProcedures {
 
-    static final String VERSION = "0.2.0";
+    static final String VERSION = resolveVersion();
+
+    private static String resolveVersion() {
+        String implementationVersion = ForwardProcedures.class.getPackage().getImplementationVersion();
+        return implementationVersion == null || implementationVersion.isBlank()
+            ? "development"
+            : implementationVersion;
+    }
 
     @Context
     public Transaction transaction;
@@ -375,6 +382,20 @@ public final class ForwardProcedures {
             execution.key(),
             terminationGuard::check
         );
+        if (!iterator.hasNext()) {
+            return Stream.of(
+                new NqeRowResult(
+                    resolvedNetworkId,
+                    snapshot.id(),
+                    projection.projectionName(),
+                    projection.version(),
+                    projection.sha256(),
+                    execution.key(),
+                    false,
+                    null
+                )
+            );
+        }
         return StreamSupport.stream(
             Spliterators.spliteratorUnknownSize(iterator, Spliterator.ORDERED | Spliterator.NONNULL),
             false
@@ -386,6 +407,7 @@ public final class ForwardProcedures {
                 projection.version(),
                 projection.sha256(),
                 execution.key(),
+                true,
                 row
             )
         );
@@ -773,6 +795,7 @@ public final class ForwardProcedures {
         public final String projectionVersion;
         public final String projectionSha256;
         public final String executionKey;
+        public final boolean resultRow;
         public final Map<String, Object> row;
 
         NqeRowResult(
@@ -782,6 +805,7 @@ public final class ForwardProcedures {
             String projectionVersion,
             String projectionSha256,
             String executionKey,
+            boolean resultRow,
             Map<String, Object> row
         ) {
             this.networkId = networkId;
@@ -790,6 +814,7 @@ public final class ForwardProcedures {
             this.projectionVersion = projectionVersion;
             this.projectionSha256 = projectionSha256;
             this.executionKey = executionKey;
+            this.resultRow = resultRow;
             this.row = row;
         }
     }

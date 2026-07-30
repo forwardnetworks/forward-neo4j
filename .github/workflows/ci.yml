@@ -1,3 +1,4 @@
+---
 name: CI
 
 on:
@@ -9,27 +10,97 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-java@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+      - uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95  # v5.6.0
         with:
           distribution: temurin
           java-version: "21"
           cache: gradle
       - name: Validate Gradle wrapper
-        uses: gradle/actions/wrapper-validation@v6
-      - name: Test and build
-        run: ./gradlew --no-daemon clean test jar
-      - name: Verify bundled NQE resources
+        uses: gradle/actions/wrapper-validation@3f131e8634966bd73d06cc69884922b02e6faf92  # v6.2.0
+      - name: Test, build, and generate SBOM
+        run: ./gradlew --no-daemon clean test jar cyclonedxBom
+      - name: Verify release inputs and deployment scripts
+        shell: bash
         run: |
-          jar tf build/libs/forward-neo4j-plugin-0.2.0.jar | grep -Fx nqe/interfaces-v1.nqe
-          jar tf build/libs/forward-neo4j-plugin-0.2.0.jar | grep -Fx nqe/interface-addresses-v1.nqe
-          jar tf build/libs/forward-neo4j-plugin-0.2.0.jar | grep -Fx nqe/network-instances-v1.nqe
-          jar tf build/libs/forward-neo4j-plugin-0.2.0.jar | grep -Fx nqe/bgp-neighbors-v1.nqe
-      - uses: actions/upload-artifact@v7
+          set -euo pipefail
+          version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' build.gradle.kts)"
+          test -n "${version}"
+          artifact="build/libs/forward-neo4j-plugin-${version}.jar"
+          sbom="build/reports/cyclonedx/bom.json"
+          test -f "${artifact}"
+          test -s "${sbom}"
+          jar tf "${artifact}" | grep -Fx nqe/interfaces-v1.nqe
+          jar tf "${artifact}" | grep -Fx nqe/interface-addresses-v1.nqe
+          jar tf "${artifact}" | grep -Fx nqe/network-instances-v1.nqe
+          jar tf "${artifact}" | grep -Fx nqe/bgp-neighbors-v1.nqe
+          bash -n demo/run-import.sh deploy/install-neo4j-browser.sh \
+            deploy/install-plugin.sh deploy/verify-install.sh
+          fixture="$(mktemp -d)"
+          deploy/install-plugin.sh "${artifact}" "${fixture}/neo4j"
+          cmp "${artifact}" "${fixture}/neo4j/plugins/forward-neo4j-plugin.jar"
+          cp "${sbom}" "build/libs/forward-neo4j-plugin-${version}.cdx.json"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
-          name: forward-neo4j-plugin-0.2.0
-          path: build/libs/forward-neo4j-plugin-0.2.0.jar
+          name: forward-neo4j-plugin
+          path: |
+            build/libs/forward-neo4j-plugin-*.jar
+            build/libs/forward-neo4j-plugin-*.cdx.json
+          if-no-files-found: error
+
+  container-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+      - name: Validate Compose and build the image
+        shell: bash
+        env:
+          NEO4J_PASSWORD: forward-ci-only-password
+        run: |
+          set -euo pipefail
+          docker compose -f demo/compose.yaml config >/dev/null
+          docker build --tag forward-neo4j:ci --file demo/Dockerfile .
+      - name: Start Neo4j and verify the installed plugin
+        shell: bash
+        run: |
+          set -euo pipefail
+          container_name="forward-neo4j-ci-${GITHUB_RUN_ID}"
+          cleanup() {
+            docker logs "${container_name}" || true
+            docker rm --force "${container_name}" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          docker run --detach --name "${container_name}" \
+            --env NEO4J_AUTH=neo4j/forward-ci-only-password \
+            --env 'NEO4J_dbms_security_procedures_allowlist=forward.*' \
+            forward-neo4j:ci >/dev/null
+          ready=false
+          for _ in $(seq 1 90); do
+            if docker exec "${container_name}" cypher-shell \
+              --address bolt://127.0.0.1:7687 \
+              --username neo4j \
+              --password forward-ci-only-password \
+              'RETURN 1 AS ready' >/dev/null 2>&1; then
+              ready=true
+              break
+            fi
+            sleep 2
+          done
+          test "${ready}" = true
+          expected_version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' build.gradle.kts)"
+          docker exec "${container_name}" cypher-shell \
+            --address bolt://127.0.0.1:7687 \
+            --username neo4j \
+            --password forward-ci-only-password \
+            "CALL forward.plugin.info() YIELD version RETURN version = '${expected_version}' AS versionMatches" \
+            | grep -Fx true

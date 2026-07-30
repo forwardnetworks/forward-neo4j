@@ -45,7 +45,8 @@ the submission POST does not retry because its response could be lost after Forw
 
 ```cypher
 CALL forward.nqe.stream("interfaces-v1", "network-id", "snapshot-id")
-YIELD snapshotId, projection, projectionVersion, projectionSha256, executionKey, row
+YIELD snapshotId, projection, projectionVersion, projectionSha256, executionKey, resultRow, row
+WHERE resultRow
 RETURN snapshotId, projection, projectionVersion, projectionSha256, row
 LIMIT 10;
 ```
@@ -54,7 +55,8 @@ Use empty IDs to select the credential file's default network and newest already
 
 ```cypher
 CALL forward.nqe.stream("network-instances-v1", "", "")
-YIELD row
+YIELD resultRow, row
+WHERE resultRow
 RETURN row
 LIMIT 10;
 ```
@@ -86,13 +88,14 @@ an implicit transaction.
 
 ## Provenance and validation
 
-Each imported row merges a `ForwardProjectionRun` with:
+Each importer merges one `ForwardProjectionRun` after all row batches complete, with:
 
 - network and snapshot IDs;
 - projection name and semantic version;
 - SHA-256 of the exact NQE source;
-- last Forward execution key and import timestamp.
+- last Forward execution key, imported row count, and import timestamp.
 
-Batch commits are restartable, not globally atomic. After an interruption, rerun the same projection and validate the
-expected node/relationship counts plus projection hash before treating the snapshot as published. A future job layer
-will make `SUBMITTED`, `IMPORTING`, `VALIDATED`, `PUBLISHED`, and `FAILED` explicit.
+The NQE stream emits a provenance-only envelope when the execution returns zero result rows, so an empty but successful
+projection still has an execution key and source hash. Batch commits are restartable, not globally atomic. Component
+jobs make `SUBMITTED`, `IMPORTING`, `VALIDATED`, and `FAILED` explicit; snapshot validation and publication remain a
+separate fail-closed gate.

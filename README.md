@@ -6,6 +6,7 @@
 
 [![CI](https://github.com/forwardnetworks/forward-neo4j/actions/workflows/ci.yml/badge.svg)](https://github.com/forwardnetworks/forward-neo4j/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/forwardnetworks/forward-neo4j)](https://github.com/forwardnetworks/forward-neo4j/releases)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 A self-managed Neo4j plugin that publishes selected Forward Networks data as a snapshot-scoped property graph. It uses
 supported Forward REST APIs, fixed and versioned NQE contracts, and idempotent Cypher imports. It is a reference
@@ -23,6 +24,7 @@ integration—not an export of Forward's internal graph.
 - Optional application ownership, criticality, device, flow, selected Check-detail, and CVE-device correlation.
 - Protected credential-file support, sanitized connectivity checks, bounded GET retries, and redirect refusal.
 - An optional local user service, Docker demo, synthetic dataset, and LAN-access instructions.
+- A checksum-verifying atomic plugin installer, local health check, CycloneDX SBOM, and attested release artifacts.
 
 ## Screenshots
 
@@ -51,8 +53,8 @@ Requirements: Java 21 and Neo4j Community 2026.06.x.
 ```bash
 ./gradlew clean test jar
 install -d ~/.local/state/forward-neo4j/plugins ~/.config/systemd/user ~/.config/forward-neo4j
-install -m 0644 build/libs/forward-neo4j-plugin-0.2.0.jar \
-  ~/.local/state/forward-neo4j/plugins/forward-neo4j-plugin.jar
+deploy/install-plugin.sh build/libs/forward-neo4j-plugin-0.2.1.jar \
+  ~/.local/state/forward-neo4j
 install -m 0644 deploy/neo4j.conf ~/.config/forward-neo4j/neo4j.conf
 install -m 0644 deploy/forward-neo4j.service ~/.config/systemd/user/forward-neo4j.service
 install -m 0600 /dev/null ~/.config/forward-neo4j/forward.credentials
@@ -168,3 +170,5 @@ findings, and path outcomes. Those results should become snapshot-scoped observa
 - Base Devices/Topology uses set-oriented writes in one Neo4j transaction; large NQE and direct-API imports are batched.
 - Partial batches remain restartable and cannot advance `currentSnapshotId` until component and structural validation pass.
 - The repository includes no tenant data, credentials, or screenshots of a live environment.
+- The self-managed reference path is production-oriented for controlled deployments; the documented single-transaction
+  base inventory import remains a scale boundary for very large estates.

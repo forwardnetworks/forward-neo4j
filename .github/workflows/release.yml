@@ -7,23 +7,33 @@ on:
       - "v*"
 
 permissions:
+  artifact-metadata: write
+  attestations: write
   contents: write
+  id-token: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   release:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-java@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95  # v5.6.0
         with:
           distribution: temurin
           java-version: "21"
           cache: gradle
       - name: Validate Gradle wrapper
-        uses: gradle/actions/wrapper-validation@v6
-      - name: Test and build
-        run: ./gradlew --no-daemon clean test jar
-      - name: Verify tag, NQEs, and release artifact
+        uses: gradle/actions/wrapper-validation@3f131e8634966bd73d06cc69884922b02e6faf92  # v6.2.0
+      - name: Test, build, and generate SBOM
+        run: ./gradlew --no-daemon clean test jar cyclonedxBom
+      - name: Verify tag and prepare release artifacts
         id: artifact
         shell: bash
         run: |
@@ -32,29 +42,43 @@ jobs:
           test -n "${version}"
           test "${GITHUB_REF_NAME}" = "v${version}"
           artifact_name="forward-neo4j-plugin-${version}.jar"
+          sbom_name="forward-neo4j-plugin-${version}.cdx.json"
           artifact="build/libs/${artifact_name}"
+          sbom="build/libs/${sbom_name}"
           test -f "${artifact}"
           jar tf "${artifact}" | grep -Fx nqe/interfaces-v1.nqe
           jar tf "${artifact}" | grep -Fx nqe/interface-addresses-v1.nqe
           jar tf "${artifact}" | grep -Fx nqe/network-instances-v1.nqe
           jar tf "${artifact}" | grep -Fx nqe/bgp-neighbors-v1.nqe
+          cp build/reports/cyclonedx/bom.json "${sbom}"
           (
             cd build/libs
-            sha256sum "${artifact_name}" > "${artifact_name}.sha256"
+            sha256sum "${artifact_name}" "${sbom_name}" > SHA256SUMS
           )
           echo "artifact=${artifact}" >> "${GITHUB_OUTPUT}"
+          echo "sbom=${sbom}" >> "${GITHUB_OUTPUT}"
+          echo "checksums=build/libs/SHA256SUMS" >> "${GITHUB_OUTPUT}"
+      - name: Attest release artifacts
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d  # v4
+        with:
+          subject-path: |
+            ${{ steps.artifact.outputs.artifact }}
+            ${{ steps.artifact.outputs.sbom }}
+            ${{ steps.artifact.outputs.checksums }}
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
           ARTIFACT: ${{ steps.artifact.outputs.artifact }}
+          SBOM: ${{ steps.artifact.outputs.sbom }}
+          CHECKSUMS: ${{ steps.artifact.outputs.checksums }}
         shell: bash
         run: |
           set -euo pipefail
           if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
-            gh release upload "${GITHUB_REF_NAME}" "${ARTIFACT}" "${ARTIFACT}.sha256" --clobber
+            gh release upload "${GITHUB_REF_NAME}" "${ARTIFACT}" "${SBOM}" "${CHECKSUMS}" --clobber
           else
             gh release create "${GITHUB_REF_NAME}" \
-              "${ARTIFACT}" "${ARTIFACT}.sha256" \
+              "${ARTIFACT}" "${SBOM}" "${CHECKSUMS}" \
               --verify-tag \
               --title "Forward Neo4j ${GITHUB_REF_NAME}" \
               --generate-notes

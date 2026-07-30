@@ -1,6 +1,6 @@
 # Forward-to-Neo4j engineering handoff
 
-Status: `0.2.0` reference integration prepared for initial release
+Status: `0.2.1` production-hardening release candidate
 
 Prepared: 2026-07-30
 
@@ -87,8 +87,9 @@ The harness suite covers procedure registration, fixed projection enumeration, p
 asynchronous submit/status handling, and lazy multi-page result retrieval. The release gate is:
 
 ```bash
-./gradlew clean test jar
-jar tf build/libs/forward-neo4j-plugin-0.2.0.jar
+./gradlew clean test jar cyclonedxBom
+jar tf build/libs/forward-neo4j-plugin-0.2.1.jar
+docker build -f demo/Dockerfile -t forward-neo4j:verify .
 ```
 
 The JAR must contain all four `.nqe` resources. Release screenshots must be captured from `demo/synthetic-data.cypher`
@@ -99,19 +100,17 @@ nodes, and only `demo-network` before the temporary instance was stopped.
 
 1. `forward.import.snapshot()` uses set-oriented writes but still downloads and writes base inventory/topology in one
    Neo4j transaction.
-2. `ForwardProjectionRun` markers are updated per NQE row; component jobs avoid ambiguity, but the lock traffic remains.
-3. A zero-row NQE has a validated component job but no row-derived `ForwardProjectionRun` provenance node.
-4. Snapshot retention and pruning policy are not implemented.
-5. Check and vulnerability detail materialization is intentionally selected-ID only, not an unbounded bulk crawl.
-6. AuraDB requires an external connector rather than this self-managed plugin.
+2. Snapshot retention and pruning policy are not implemented.
+3. Check and vulnerability detail materialization is intentionally selected-ID only, not an unbounded bulk crawl.
+4. Unattended scheduling and metrics export are not implemented.
+5. AuraDB requires an external connector rather than this self-managed plugin.
 
 ## Next build order
 
 1. Add a streamed/batched Devices and Topology surface for very large estates.
-2. Move NQE projection provenance updates out of the per-row importer transaction.
-3. Add multi-snapshot change examples, retention rules, and safe pruning procedures.
-4. Add a scheduler/metrics surface for unattended operation after the import contract stabilizes.
-5. Build an external connector for AuraDB.
+2. Add retention rules and safe pruning procedures.
+3. Add a scheduler/metrics surface for unattended operation after the import contract stabilizes.
+4. Build an external connector for AuraDB.
 
 ## Positioning guardrail
 

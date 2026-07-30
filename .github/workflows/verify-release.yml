@@ -1,0 +1,60 @@
+---
+name: Verify release
+
+on:
+  workflow_run:
+    workflows: [Release]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      release_name:
+        description: Exact published tag to verify
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  attestations: read
+  contents: read
+
+jobs:
+  verify:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.release_name || github.event.workflow_run.head_sha }}
+      - name: Download and verify published artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            release_name="${{ inputs.release_name }}"
+          else
+            version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' build.gradle.kts)"
+            test -n "${version}"
+            release_name="v${version}"
+          fi
+          verification_dir="build/published-release-verification"
+          mkdir -p "${verification_dir}"
+          gh release download "${release_name}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --dir "${verification_dir}"
+          (
+            cd "${verification_dir}"
+            sha256sum -c SHA256SUMS
+          )
+          artifact="${verification_dir}/forward-neo4j-plugin-${release_name#v}.jar"
+          sbom="${verification_dir}/forward-neo4j-plugin-${release_name#v}.cdx.json"
+          test -f "${artifact}"
+          test -s "${sbom}"
+          gh attestation verify "${artifact}" --repo "${GITHUB_REPOSITORY}"
+          gh attestation verify "${sbom}" --repo "${GITHUB_REPOSITORY}"
+          jar tf "${artifact}" | grep -Fx nqe/interfaces-v1.nqe
+          jar tf "${artifact}" | grep -Fx nqe/interface-addresses-v1.nqe
+          jar tf "${artifact}" | grep -Fx nqe/network-instances-v1.nqe
+          jar tf "${artifact}" | grep -Fx nqe/bgp-neighbors-v1.nqe

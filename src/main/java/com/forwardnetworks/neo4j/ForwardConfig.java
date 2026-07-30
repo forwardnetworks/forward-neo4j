@@ -103,6 +103,16 @@ record ForwardConfig(
             DEFAULT_NQE_TIMEOUT_SECONDS,
             "FORWARD_NQE_TIMEOUT_SECONDS"
         );
+        if (!isLoopback(baseUri) && nqePollSeconds < 5) {
+            throw new IllegalStateException(
+                "FORWARD_NQE_POLL_SECONDS must be at least 5 for a non-loopback Forward URL"
+            );
+        }
+        if (nqeTimeoutSeconds <= nqePollSeconds) {
+            throw new IllegalStateException(
+                "FORWARD_NQE_TIMEOUT_SECONDS must be greater than FORWARD_NQE_POLL_SECONDS"
+            );
+        }
         int pageSize = positiveInt(
             setting(environment, properties, "FORWARD_NQE_PAGE_SIZE", "forward.nqePageSize"),
             DEFAULT_NQE_PAGE_SIZE,

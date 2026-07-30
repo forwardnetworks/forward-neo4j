@@ -69,6 +69,11 @@ Run [`demo/customer-demo.cypher`](../demo/customer-demo.cypher) section by secti
 6. application-to-device risk correlation; and
 7. ordered path hops and outcomes.
 
+After a second snapshot has been validated and published, run
+[`demo/snapshot-diff.cypher`](../demo/snapshot-diff.cypher) to show added and removed devices, BGP state transitions,
+changed Checks, and newly observed CVEs. Every comparison resolves through `currentSnapshotId` and
+`previousSnapshotId`; it never compares a staged or invalid snapshot.
+
 Lead with the operational question, not the graph size. A strong example is: “For this published Forward snapshot,
 show the critical application, the devices it runs on, failed verification or CVE observations affecting those
 devices, and the modeled path outcome for an approved flow.”

@@ -188,6 +188,23 @@ class ForwardProceduresTest {
     }
 
     @Test
+    void snapshotDiffQueriesCompile() throws IOException {
+        try (Neo4j neo4j = Neo4jBuilders.newInProcessBuilder()
+            .withDisabledServer()
+            .withProcedure(ForwardProcedures.class)
+            .build();
+            var driver = org.neo4j.driver.GraphDatabase.driver(neo4j.boltURI());
+            var session = driver.session()) {
+            String script = Files.readString(Path.of("demo", "snapshot-diff.cypher"));
+            for (String statement : script.split(";\\s*(?:\\R|$)")) {
+                if (!statement.isBlank()) {
+                    session.run("EXPLAIN " + statement, Map.of("networkId", "network-1")).consume();
+                }
+            }
+        }
+    }
+
+    @Test
     void validatesComponentsBeforeAtomicallyPublishingSnapshot() {
         try (Neo4j neo4j = Neo4jBuilders.newInProcessBuilder()
             .withDisabledServer()
@@ -486,6 +503,54 @@ class ForwardProceduresTest {
             assertEquals("snapshot-1", records.getFirst().get("snapshotId").asString());
             assertEquals("interfaces-v1", records.getFirst().get("projection").asString());
             assertEquals("router-c", records.getLast().get("row").get("deviceName").asString());
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void emitsProvenanceEnvelopeForZeroRowNqe() throws IOException {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        String expectedAuthorization = basicAuthorization();
+        server.createContext("/api/networks/network-1/nqe-executions/exec-empty/result", exchange ->
+            respond(
+                exchange,
+                expectedAuthorization,
+                "GET",
+                "{\"snapshotId\":\"snapshot-1\",\"totalNumItems\":0,\"items\":[]}"
+            )
+        );
+        server.createContext("/api/networks/network-1/nqe-executions", exchange ->
+            respond(
+                exchange,
+                expectedAuthorization,
+                "POST",
+                "{\"executionKey\":\"exec-empty\",\"status\":\"COMPLETED\",\"outcome\":\"OK\",\"rowsProduced\":0}"
+            )
+        );
+        server.start();
+
+        configureForward(server);
+        try (
+            Neo4j neo4j = Neo4jBuilders.newInProcessBuilder()
+                .withDisabledServer()
+                .withProcedure(ForwardProcedures.class)
+                .build();
+            var driver = org.neo4j.driver.GraphDatabase.driver(neo4j.boltURI())
+        ) {
+            var records = driver.executableQuery(
+                """
+                CALL forward.nqe.stream('interfaces-v1', 'network-1', 'snapshot-1')
+                YIELD projection, projectionVersion, projectionSha256, executionKey, resultRow, row
+                RETURN *
+                """
+            ).execute().records();
+
+            assertEquals(1, records.size());
+            assertFalse(records.getFirst().get("resultRow").asBoolean());
+            assertTrue(records.getFirst().get("row").isNull());
+            assertEquals("exec-empty", records.getFirst().get("executionKey").asString());
+            assertEquals(64, records.getFirst().get("projectionSha256").asString().length());
         } finally {
             server.stop(0);
         }

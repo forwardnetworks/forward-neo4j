@@ -1,0 +1,10 @@
+# Default ownership for the Forward Neo4j reference integration.
+* @captainpacket
+
+# Keep security-sensitive and release surfaces explicit.
+/src/ @captainpacket
+/deploy/ @captainpacket
+/demo/ @captainpacket
+/docs/ @captainpacket
+/.github/ @captainpacket
+/build.gradle.kts @captainpacket
