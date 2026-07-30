@@ -36,6 +36,8 @@ CALL forward.import.status($networkId, $snapshotId);
 CALL forward.snapshot.validate($networkId, $snapshotId, $requiredComponents);
 CALL forward.snapshot.status($networkId, $snapshotId);
 CALL forward.snapshot.publish($networkId, $snapshotId);
+CALL forward.snapshot.retention.preview($networkId, 2, 30);
+CALL forward.snapshot.prune($networkId, $explicitSnapshotIds);
 ```
 
 `inventory` is always required by validation. Additional required components are explicit and license-gated. This
@@ -79,9 +81,45 @@ unset NEO4J_PASSWORD
 Use an explicit `--snapshot` for repeatable demos. Omitting it selects the latest processed, non-archived Forward
 snapshot through the read-only API.
 
-Base inventory is now written with set-oriented `UNWIND` statements rather than one Cypher execution per device or
-link. It is still one Neo4j transaction; very large estates should use the planned streamed inventory surface before
-this integration is treated as an unattended high-scale pipeline.
+Base inventory uses `forward.inventory.devices.stream` and `forward.inventory.topology.stream`. Forward JSON arrays
+are parsed incrementally, and the paired Cypher importers commit every 5,000 rows. Only device-name strings are retained
+while topology endpoint references are resolved. A malformed or interrupted response fails the run; it is not silently
+restarted mid-array. Stable keys make a new run idempotent.
+
+The legacy `forward.import.snapshot()` procedure remains for compatibility and small estates. The supported wrapper
+uses the streamed path by default.
+
+## Retention and pruning
+
+Preview first:
+
+```cypher
+CALL forward.snapshot.retention.preview($networkId, 2, 30)
+YIELD snapshotId, publicationState, protectedSnapshot, eligible, reason
+RETURN * ORDER BY eligible DESC, snapshotId;
+```
+
+The current, previous, and candidate pointers are always protected. `keepPublished` must be at least two, and the age
+window prevents newly staged data from becoming immediately eligible. Pruning never accepts a policy expression: pass
+the exact reviewed IDs from the preview.
+
+```cypher
+CALL forward.snapshot.prune($networkId, ["reviewed-old-snapshot"]);
+```
+
+Prune is capped at 100 snapshots per call, rechecks protected pointers in the write transaction, refuses missing IDs,
+and deletes only integration-owned snapshot labels. Network-scoped applications, owners and flows—and customer-owned
+labels—are not delete targets.
+
+## Scheduling and metrics
+
+The optional systemd timer runs a one-shot import under `flock`; it does not create background threads inside Neo4j.
+It is disabled by default. See [installation](INSTALL.md#optional-scheduled-imports-and-metrics) for a manual staged-run
+gate before enabling it.
+
+`forward.metrics.prometheus()` reports durable graph health: network presence, pending candidate state, current device
+count and age, snapshot states, and import-job states. `deploy/export-metrics.sh` writes the textfile atomically. It
+does not publish an HTTP endpoint or expose Forward credentials.
 
 ## Recovery
 

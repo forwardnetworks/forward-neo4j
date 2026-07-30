@@ -4,7 +4,7 @@ plugins {
 }
 
 group = "com.forwardnetworks.neo4j"
-version = "0.2.2"
+version = "0.3.0"
 
 val neo4jVersion = "2026.06.0"
 
@@ -20,10 +20,10 @@ repositories {
 
 dependencies {
     compileOnly("org.neo4j:neo4j:$neo4jVersion")
-    compileOnly("com.fasterxml.jackson.core:jackson-databind:2.20.1")
+    compileOnly("com.fasterxml.jackson.core:jackson-databind:2.22.1")
 
-    testImplementation("org.junit.jupiter:junit-jupiter:5.13.4")
-    testImplementation("com.fasterxml.jackson.core:jackson-databind:2.20.1")
+    testImplementation("org.junit.jupiter:junit-jupiter:6.1.2")
+    testImplementation("com.fasterxml.jackson.core:jackson-databind:2.22.1")
     testImplementation("org.neo4j.test:neo4j-harness:$neo4jVersion")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
@@ -42,4 +42,11 @@ tasks.jar {
 
 tasks.test {
     useJUnitPlatform()
+}
+
+// CycloneDX's aggregate task duplicates the root component when the connector depends on the plugin.
+// Each release artifact has its own direct BOM instead.
+tasks.named("cyclonedxBom") {
+    enabled = false
+    dependsOn("cyclonedxDirectBom")
 }

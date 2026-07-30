@@ -1,0 +1,16 @@
+[Unit]
+Description=Import and publish the latest Forward snapshot into Neo4j
+After=forward-neo4j.service network-online.target
+Wants=network-online.target
+Requires=forward-neo4j.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/.local/share/forward-neo4j
+EnvironmentFile=%h/.config/forward-neo4j/scheduler.env
+ExecStart=%h/.local/share/forward-neo4j/deploy/run-scheduled-import.sh
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.local/state/forward-neo4j %t

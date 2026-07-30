@@ -83,6 +83,132 @@ class ForwardProceduresTest {
     }
 
     @Test
+    void previewsAndPrunesOnlyExplicitUnprotectedManagedSnapshots() {
+        try (Neo4j neo4j = Neo4jBuilders.newInProcessBuilder()
+            .withDisabledServer()
+            .withProcedure(ForwardProcedures.class)
+            .build()) {
+            try (var driver = org.neo4j.driver.GraphDatabase.driver(neo4j.boltURI())) {
+                driver.executableQuery(
+                    """
+                    CREATE (network:ForwardNetwork {
+                      id: 'network-1', currentSnapshotId: 'snapshot-current',
+                      previousSnapshotId: 'snapshot-previous', candidateSnapshotId: 'snapshot-candidate'
+                    })
+                    CREATE (old:ForwardSnapshot {
+                      networkId: 'network-1', id: 'snapshot-old', publicationState: 'SUPERSEDED',
+                      importedAt: datetime('2025-01-01T00:00:00Z'), publishedAt: datetime('2025-01-01T01:00:00Z')
+                    })
+                    CREATE (previous:ForwardSnapshot {
+                      networkId: 'network-1', id: 'snapshot-previous', publicationState: 'SUPERSEDED',
+                      importedAt: datetime('2025-02-01T00:00:00Z'), publishedAt: datetime('2025-02-01T01:00:00Z')
+                    })
+                    CREATE (current:ForwardSnapshot {
+                      networkId: 'network-1', id: 'snapshot-current', publicationState: 'PUBLISHED',
+                      importedAt: datetime('2025-03-01T00:00:00Z'), publishedAt: datetime('2025-03-01T01:00:00Z')
+                    })
+                    CREATE (candidate:ForwardSnapshot {
+                      networkId: 'network-1', id: 'snapshot-candidate', publicationState: 'STAGED',
+                      importedAt: datetime('2025-04-01T00:00:00Z')
+                    })
+                    CREATE (network)-[:HAS_SNAPSHOT]->(old),
+                           (network)-[:HAS_SNAPSHOT]->(previous),
+                           (network)-[:HAS_SNAPSHOT]->(current),
+                           (network)-[:HAS_SNAPSHOT]->(candidate)
+                    CREATE (old)-[:CONTAINS]->(:ForwardDevice {
+                      networkId: 'network-1', snapshotId: 'snapshot-old', id: 'old-router'
+                    })
+                    CREATE (:ForwardImportJob {
+                      networkId: 'network-1', snapshotId: 'snapshot-old', component: 'inventory'
+                    })
+                    CREATE (:CustomerOwned {
+                      networkId: 'network-1', snapshotId: 'snapshot-old', id: 'must-survive'
+                    })
+                    CREATE (:ForwardApplication {networkId: 'network-1', id: 'app-1'})
+                    """
+                ).execute();
+
+                var preview = driver.executableQuery(
+                    "CALL forward.snapshot.retention.preview('network-1', 2, 0)"
+                ).execute().records();
+                assertEquals(4, preview.size());
+                var old = preview.stream()
+                    .filter(record -> "snapshot-old".equals(record.get("snapshotId").asString()))
+                    .findFirst()
+                    .orElseThrow();
+                assertTrue(old.get("eligible").asBoolean());
+                assertEquals("ELIGIBLE", old.get("reason").asString());
+                assertTrue(preview.stream()
+                    .filter(record -> !"snapshot-old".equals(record.get("snapshotId").asString()))
+                    .allMatch(record -> record.get("protectedSnapshot").asBoolean()));
+
+                assertThrows(Exception.class, () -> driver.executableQuery(
+                    "CALL forward.snapshot.prune('network-1', ['snapshot-current'])"
+                ).execute());
+
+                var prune = driver.executableQuery(
+                    "CALL forward.snapshot.prune('network-1', ['snapshot-old'])"
+                ).execute().records().getFirst();
+                assertEquals(1, prune.get("snapshotsDeleted").asLong());
+                assertEquals(3, prune.get("nodesDeleted").asLong());
+
+                var remaining = driver.executableQuery(
+                    """
+                    MATCH (custom:CustomerOwned {id: 'must-survive'})
+                    MATCH (app:ForwardApplication {id: 'app-1'})
+                    RETURN count(custom) AS custom, count(app) AS applications
+                    """
+                ).execute().records().getFirst();
+                assertEquals(1, remaining.get("custom").asLong());
+                assertEquals(1, remaining.get("applications").asLong());
+            }
+        }
+    }
+
+    @Test
+    void exportsPrometheusHealthMetricsFromDurableGraphState() {
+        try (Neo4j neo4j = Neo4jBuilders.newInProcessBuilder()
+            .withDisabledServer()
+            .withProcedure(ForwardProcedures.class)
+            .build()) {
+            try (var driver = org.neo4j.driver.GraphDatabase.driver(neo4j.boltURI())) {
+                driver.executableQuery(
+                    """
+                    CREATE (network:ForwardNetwork {
+                      id: 'network-1', currentSnapshotId: 'snapshot-1', candidateSnapshotId: 'snapshot-2'
+                    })
+                    CREATE (current:ForwardSnapshot {
+                      networkId: 'network-1', id: 'snapshot-1', publicationState: 'PUBLISHED',
+                      publishedAt: datetime()
+                    })
+                    CREATE (candidate:ForwardSnapshot {
+                      networkId: 'network-1', id: 'snapshot-2', publicationState: 'STAGED'
+                    })
+                    CREATE (network)-[:HAS_SNAPSHOT]->(current),
+                           (network)-[:HAS_SNAPSHOT]->(candidate)
+                    CREATE (current)-[:CONTAINS]->(:ForwardDevice {
+                      networkId: 'network-1', snapshotId: 'snapshot-1', id: 'router-1'
+                    })
+                    CREATE (:ForwardImportJob {
+                      networkId: 'network-1', snapshotId: 'snapshot-2', component: 'inventory', state: 'IMPORTING'
+                    })
+                    """
+                ).execute();
+
+                List<String> lines = driver.executableQuery(
+                    "CALL forward.metrics.prometheus('network-1') YIELD line RETURN line"
+                ).execute().records().stream().map(record -> record.get("line").asString()).toList();
+                assertTrue(lines.contains("# TYPE forward_neo4j_devices_current gauge"));
+                assertTrue(lines.contains("forward_neo4j_devices_current{network_id=\"network-1\"} 1"));
+                assertTrue(lines.contains("forward_neo4j_candidate_pending{network_id=\"network-1\"} 1"));
+                assertTrue(lines.contains(
+                    "forward_neo4j_import_jobs_total{network_id=\"network-1\",state=\"IMPORTING\"} 1"
+                ));
+            }
+        }
+    }
+
+    @Test
     void listsOnlyBundledNqeProjections() {
         try (Neo4j neo4j = Neo4jBuilders.newInProcessBuilder()
             .withDisabledServer()
@@ -123,6 +249,8 @@ class ForwardProceduresTest {
     @Test
     void batchedNqeImportScriptsCompile() throws IOException {
         List<String> scripts = List.of(
+            "import-inventory-devices.cypher",
+            "import-inventory-topology.cypher",
             "import-interfaces.cypher",
             "import-interface-addresses.cypher",
             "import-network-instances.cypher",
@@ -629,6 +757,38 @@ class ForwardProceduresTest {
             ).execute().records().getFirst();
             assertEquals(2, counts.get("devices").asLong());
             assertEquals(1, counts.get("links").asLong());
+
+            driver.executableQuery("CALL forward.inventory.begin('network-1', 'snapshot-new')")
+                .execute();
+            try (var session = driver.session()) {
+                var parameters = Map.<String, Object>of(
+                    "networkId", "network-1",
+                    "snapshotId", "snapshot-new"
+                );
+                var devices = session.run(
+                    Files.readString(Path.of("demo", "import-inventory-devices.cypher")),
+                    parameters
+                ).single();
+                assertEquals("INVENTORY_DEVICES=2", devices.get("marker").asString());
+
+                var topology = session.run(
+                    Files.readString(Path.of("demo", "import-inventory-topology.cypher")),
+                    parameters
+                ).single();
+                assertEquals("INVENTORY_TOPOLOGY=2|1", topology.get("marker").asString());
+            }
+            var streamed = driver.executableQuery(
+                "CALL forward.inventory.complete('network-1', 'snapshot-new', 1)"
+            ).execute().records().getFirst();
+            assertEquals(2, streamed.get("devices").asLong());
+            assertEquals(1, streamed.get("links").asLong());
+            assertEquals(1, streamed.get("skippedLinks").asLong());
+
+            driver.executableQuery("CALL forward.snapshot.validate('network-1', 'snapshot-new', [])").execute();
+            driver.executableQuery("CALL forward.snapshot.publish('network-1', 'snapshot-new')").execute();
+            var noOp = driver.executableQuery("CALL forward.inventory.begin('network-1', 'snapshot-new')")
+                .execute().records().getFirst();
+            assertTrue(noOp.get("alreadyPublished").asBoolean());
         } finally {
             server.stop(0);
         }

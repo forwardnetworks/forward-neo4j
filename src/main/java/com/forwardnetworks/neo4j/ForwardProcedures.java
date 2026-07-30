@@ -90,6 +90,14 @@ public final class ForwardProcedures {
         );
     }
 
+    @Procedure(name = "forward.metrics.prometheus", mode = Mode.READ)
+    @Description("Exports low-cardinality integration health metrics in Prometheus text format.")
+    public Stream<MetricsLineResult> prometheusMetrics(
+        @Name(value = "networkId", defaultValue = "") String networkId
+    ) {
+        return new MetricsCollector(transaction).prometheus(networkId).stream().map(MetricsLineResult::new);
+    }
+
     @Procedure(name = "forward.schema.install", mode = Mode.SCHEMA)
     @Description("Installs the minimal constraints used by Forward snapshot imports.")
     public Stream<SchemaInstallResult> installSchema() {
@@ -213,6 +221,110 @@ public final class ForwardProcedures {
         );
     }
 
+    @Procedure(name = "forward.inventory.begin", mode = Mode.WRITE)
+    @Description("Stages a Forward snapshot for a memory-bounded inventory import without publishing it.")
+    public Stream<InventoryBeginResult> beginInventory(
+        @Name(value = "networkId", defaultValue = "") String networkId,
+        @Name(value = "snapshotId", defaultValue = "") String snapshotId
+    ) {
+        var config = ForwardConfig.fromEnvironment();
+        config.licenseTier().require(ForwardFeature.INVENTORY);
+        String resolvedNetworkId = config.resolveNetworkId(networkId);
+        var snapshot = new ForwardApiClient(config).selectSnapshot(resolvedNetworkId, snapshotId);
+        var importer = new SnapshotImporter(transaction);
+        boolean alreadyPublished = importer.isCurrentPublished(resolvedNetworkId, snapshot.id());
+        if (!alreadyPublished) {
+            importer.beginInventory(resolvedNetworkId, snapshot);
+        }
+        return Stream.of(new InventoryBeginResult(
+            resolvedNetworkId,
+            snapshot.id(),
+            snapshot.createdAt(),
+            snapshot.processedAt(),
+            alreadyPublished
+        ));
+    }
+
+    @Procedure(name = "forward.inventory.devices.stream", mode = Mode.READ)
+    @Description("Incrementally parses and streams devices from the read-only Forward Devices API.")
+    public Stream<InventoryDeviceResult> streamInventoryDevices(
+        @Name(value = "networkId", defaultValue = "") String networkId,
+        @Name(value = "snapshotId", defaultValue = "") String snapshotId
+    ) {
+        var config = ForwardConfig.fromEnvironment();
+        config.licenseTier().require(ForwardFeature.INVENTORY);
+        String resolvedNetworkId = config.resolveNetworkId(networkId);
+        var client = new ForwardApiClient(config);
+        var snapshot = client.selectSnapshot(resolvedNetworkId, snapshotId);
+        return client.streamDevices(resolvedNetworkId, snapshot.id(), terminationGuard::check).map(device ->
+            new InventoryDeviceResult(
+                resolvedNetworkId,
+                snapshot.id(),
+                device.name(),
+                device.displayName(),
+                device.type(),
+                device.vendor(),
+                device.model(),
+                device.platform(),
+                device.osVersion(),
+                device.locationId(),
+                device.managementIps(),
+                device.tags()
+            )
+        );
+    }
+
+    @Procedure(name = "forward.inventory.topology.stream", mode = Mode.READ)
+    @Description("Incrementally parses Forward topology and resolves canonical snapshot-scoped interface links.")
+    public Stream<InventoryTopologyResult> streamInventoryTopology(
+        @Name("networkId") String networkId,
+        @Name("snapshotId") String snapshotId
+    ) {
+        requireIdentifier(networkId, "networkId");
+        requireIdentifier(snapshotId, "snapshotId");
+        var config = ForwardConfig.fromEnvironment();
+        config.licenseTier().require(ForwardFeature.INVENTORY);
+        List<String> deviceNames = new SnapshotImporter(transaction).deviceNames(networkId, snapshotId);
+        if (deviceNames.isEmpty()) {
+            throw new IllegalStateException("Import devices before streaming topology for snapshot " + snapshotId);
+        }
+        var client = new ForwardApiClient(config);
+        return client.streamTopology(snapshotId, terminationGuard::check).map(link -> {
+            var source = SnapshotImporter.parsePort(link.sourcePort(), deviceNames);
+            var target = SnapshotImporter.parsePort(link.targetPort(), deviceNames);
+            if (source == null || target == null) {
+                return InventoryTopologyResult.skipped(networkId, snapshotId, "UNRESOLVED_DEVICE");
+            }
+            if (source.equals(target)) {
+                return InventoryTopologyResult.skipped(networkId, snapshotId, "SELF_LINK");
+            }
+            var canonical = SnapshotImporter.LinkKey.canonical(source, target);
+            return InventoryTopologyResult.link(networkId, snapshotId, canonical.source(), canonical.target());
+        });
+    }
+
+    @Procedure(name = "forward.inventory.complete", mode = Mode.WRITE)
+    @Description("Validates a streamed inventory from graph counts and records skipped topology rows.")
+    public Stream<SnapshotImportResult> completeInventory(
+        @Name("networkId") String networkId,
+        @Name("snapshotId") String snapshotId,
+        @Name(value = "skippedLinks", defaultValue = "0") long skippedLinks
+    ) {
+        requireIdentifier(networkId, "networkId");
+        requireIdentifier(snapshotId, "snapshotId");
+        ForwardConfig.licenseTier(System.getenv(), System.getProperties()).require(ForwardFeature.INVENTORY);
+        long startedAt = System.nanoTime();
+        var stats = new SnapshotImporter(transaction).completeInventory(networkId, snapshotId, skippedLinks);
+        return Stream.of(new SnapshotImportResult(
+            networkId,
+            snapshotId,
+            stats.devices(),
+            stats.links(),
+            stats.skippedLinks(),
+            java.time.Duration.ofNanos(System.nanoTime() - startedAt).toMillis()
+        ));
+    }
+
     @Procedure(name = "forward.import.begin", mode = Mode.WRITE)
     @Description("Starts or restarts a snapshot-scoped component import job without advancing the published snapshot.")
     public Stream<ImportJobResult> beginImport(
@@ -333,6 +445,32 @@ public final class ForwardProcedures {
         requireIdentifier(networkId, "networkId");
         requireIdentifier(snapshotId, "snapshotId");
         return Stream.of(new SnapshotStatusResult(new ImportJobManager(transaction).snapshot(networkId, snapshotId)));
+    }
+
+    @Procedure(name = "forward.snapshot.retention.preview", mode = Mode.READ)
+    @Description("Previews snapshot retention without deleting data; current, previous, and candidate are always protected.")
+    public Stream<SnapshotRetentionResult> previewSnapshotRetention(
+        @Name("networkId") String networkId,
+        @Name(value = "keepPublished", defaultValue = "2") long keepPublished,
+        @Name(value = "minimumAgeDays", defaultValue = "30") long minimumAgeDays
+    ) {
+        requireIdentifier(networkId, "networkId");
+        return new SnapshotRetentionManager(transaction)
+            .preview(networkId, keepPublished, minimumAgeDays)
+            .stream()
+            .map(SnapshotRetentionResult::new);
+    }
+
+    @Procedure(name = "forward.snapshot.prune", mode = Mode.WRITE)
+    @Description("Deletes only explicitly named, managed snapshots and refuses protected snapshot pointers.")
+    public Stream<SnapshotPruneResult> pruneSnapshots(
+        @Name("networkId") String networkId,
+        @Name("snapshotIds") List<String> snapshotIds
+    ) {
+        requireIdentifier(networkId, "networkId");
+        return Stream.of(new SnapshotPruneResult(
+            new SnapshotRetentionManager(transaction).prune(networkId, snapshotIds)
+        ));
     }
 
     @Procedure(name = "forward.nqe.projections", mode = Mode.READ)
@@ -581,6 +719,142 @@ public final class ForwardProcedures {
         }
     }
 
+    public static final class MetricsLineResult {
+        public final String line;
+
+        MetricsLineResult(String line) {
+            this.line = line;
+        }
+    }
+
+    public static final class InventoryBeginResult {
+        public final String networkId;
+        public final String snapshotId;
+        public final String createdAt;
+        public final String processedAt;
+        public final boolean alreadyPublished;
+
+        InventoryBeginResult(
+            String networkId,
+            String snapshotId,
+            String createdAt,
+            String processedAt,
+            boolean alreadyPublished
+        ) {
+            this.networkId = networkId;
+            this.snapshotId = snapshotId;
+            this.createdAt = createdAt;
+            this.processedAt = processedAt;
+            this.alreadyPublished = alreadyPublished;
+        }
+    }
+
+    public static final class InventoryDeviceResult {
+        public final String networkId;
+        public final String snapshotId;
+        public final String id;
+        public final String displayName;
+        public final String type;
+        public final String vendor;
+        public final String model;
+        public final String platform;
+        public final String osVersion;
+        public final String locationId;
+        public final List<String> managementIps;
+        public final List<String> tags;
+
+        InventoryDeviceResult(
+            String networkId,
+            String snapshotId,
+            String id,
+            String displayName,
+            String type,
+            String vendor,
+            String model,
+            String platform,
+            String osVersion,
+            String locationId,
+            List<String> managementIps,
+            List<String> tags
+        ) {
+            this.networkId = networkId;
+            this.snapshotId = snapshotId;
+            this.id = id;
+            this.displayName = displayName;
+            this.type = type;
+            this.vendor = vendor;
+            this.model = model;
+            this.platform = platform;
+            this.osVersion = osVersion;
+            this.locationId = locationId;
+            this.managementIps = managementIps;
+            this.tags = tags;
+        }
+    }
+
+    public static final class InventoryTopologyResult {
+        public final String networkId;
+        public final String snapshotId;
+        public final boolean linkRow;
+        public final String sourceId;
+        public final String sourceDevice;
+        public final String sourceInterface;
+        public final String targetId;
+        public final String targetDevice;
+        public final String targetInterface;
+        public final String skipReason;
+
+        private InventoryTopologyResult(
+            String networkId,
+            String snapshotId,
+            boolean linkRow,
+            String sourceId,
+            String sourceDevice,
+            String sourceInterface,
+            String targetId,
+            String targetDevice,
+            String targetInterface,
+            String skipReason
+        ) {
+            this.networkId = networkId;
+            this.snapshotId = snapshotId;
+            this.linkRow = linkRow;
+            this.sourceId = sourceId;
+            this.sourceDevice = sourceDevice;
+            this.sourceInterface = sourceInterface;
+            this.targetId = targetId;
+            this.targetDevice = targetDevice;
+            this.targetInterface = targetInterface;
+            this.skipReason = skipReason;
+        }
+
+        static InventoryTopologyResult skipped(String networkId, String snapshotId, String reason) {
+            return new InventoryTopologyResult(
+                networkId, snapshotId, false, null, null, null, null, null, null, reason
+            );
+        }
+
+        static InventoryTopologyResult link(
+            String networkId,
+            String snapshotId,
+            SnapshotImporter.PortRef source,
+            SnapshotImporter.PortRef target
+        ) {
+            return new InventoryTopologyResult(
+                networkId,
+                snapshotId,
+                true,
+                source.raw(),
+                source.deviceName(),
+                source.interfaceName(),
+                target.raw(),
+                target.deviceName(),
+                target.interfaceName(),
+                null
+            );
+        }
+    }
+
     public static final class LicenseFeatureResult {
         public final String configuredLicenseTier;
         public final String feature;
@@ -741,6 +1015,42 @@ public final class ForwardProcedures {
             this.previousSnapshotId = publication.previousSnapshotId();
             this.publishedAt = publication.publishedAt();
             this.components = publication.components();
+        }
+    }
+
+    public static final class SnapshotRetentionResult {
+        public final String networkId;
+        public final String snapshotId;
+        public final String publicationState;
+        public final String importedAt;
+        public final String publishedAt;
+        public final boolean protectedSnapshot;
+        public final boolean eligible;
+        public final String reason;
+
+        SnapshotRetentionResult(SnapshotRetentionManager.RetentionCandidate candidate) {
+            this.networkId = candidate.networkId();
+            this.snapshotId = candidate.snapshotId();
+            this.publicationState = candidate.publicationState();
+            this.importedAt = candidate.importedAt();
+            this.publishedAt = candidate.publishedAt();
+            this.protectedSnapshot = candidate.protectedSnapshot();
+            this.eligible = candidate.eligible();
+            this.reason = candidate.reason();
+        }
+    }
+
+    public static final class SnapshotPruneResult {
+        public final String networkId;
+        public final List<String> snapshotIds;
+        public final long snapshotsDeleted;
+        public final long nodesDeleted;
+
+        SnapshotPruneResult(SnapshotRetentionManager.PruneResult result) {
+            this.networkId = result.networkId();
+            this.snapshotIds = result.snapshotIds();
+            this.snapshotsDeleted = result.snapshotIds().size();
+            this.nodesDeleted = result.deletedNodes();
         }
     }
 

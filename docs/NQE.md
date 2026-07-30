@@ -99,3 +99,7 @@ The NQE stream emits a provenance-only envelope when the execution returns zero 
 projection still has an execution key and source hash. Batch commits are restartable, not globally atomic. Component
 jobs make `SUBMITTED`, `IMPORTING`, `VALIDATED`, and `FAILED` explicit; snapshot validation and publication remain a
 separate fail-closed gate.
+
+The AuraDB connector uses the same `NqeProjection` registry, asynchronous lifecycle, result paging, source hashes, and
+graph mappings. It runs outside Neo4j and writes batches over the encrypted Java Driver because AuraDB cannot load the
+server procedure JAR.

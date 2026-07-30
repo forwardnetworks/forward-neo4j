@@ -32,7 +32,9 @@ jobs:
       - name: Validate Gradle wrapper
         uses: gradle/actions/wrapper-validation@3f131e8634966bd73d06cc69884922b02e6faf92  # v6.2.0
       - name: Test, build, and generate SBOM
-        run: ./gradlew --no-daemon clean test jar cyclonedxBom
+        run: >-
+          ./gradlew --no-daemon --max-workers=1 clean :test jar cyclonedxDirectBom
+          :connector:test :connector:distTar :connector:distZip :connector:cyclonedxDirectBom
       - name: Verify tag and prepare release artifacts
         id: artifact
         shell: bash
@@ -43,21 +45,39 @@ jobs:
           test "${GITHUB_REF_NAME}" = "v${version}"
           artifact_name="forward-neo4j-plugin-${version}.jar"
           sbom_name="forward-neo4j-plugin-${version}.cdx.json"
+          connector_tar_name="forward-neo4j-connector-${version}.tar"
+          connector_zip_name="forward-neo4j-connector-${version}.zip"
+          connector_sbom_name="forward-neo4j-connector-${version}.cdx.json"
           artifact="build/libs/${artifact_name}"
           sbom="build/libs/${sbom_name}"
+          connector_tar="build/libs/${connector_tar_name}"
+          connector_zip="build/libs/${connector_zip_name}"
+          connector_sbom="build/libs/${connector_sbom_name}"
           test -f "${artifact}"
-          jar tf "${artifact}" | grep -Fx nqe/interfaces-v1.nqe
-          jar tf "${artifact}" | grep -Fx nqe/interface-addresses-v1.nqe
-          jar tf "${artifact}" | grep -Fx nqe/network-instances-v1.nqe
-          jar tf "${artifact}" | grep -Fx nqe/bgp-neighbors-v1.nqe
-          cp build/reports/cyclonedx/bom.json "${sbom}"
+          jar_listing="$(jar tf "${artifact}")"
+          grep -Fxq nqe/interfaces-v1.nqe <<<"${jar_listing}"
+          grep -Fxq nqe/interface-addresses-v1.nqe <<<"${jar_listing}"
+          grep -Fxq nqe/network-instances-v1.nqe <<<"${jar_listing}"
+          grep -Fxq nqe/bgp-neighbors-v1.nqe <<<"${jar_listing}"
+          cp build/reports/cyclonedx-direct/bom.json "${sbom}"
+          cp "connector/build/distributions/${connector_tar_name}" "${connector_tar}"
+          cp "connector/build/distributions/${connector_zip_name}" "${connector_zip}"
+          cp connector/build/reports/cyclonedx-direct/bom.json "${connector_sbom}"
+          tar_listing="$(tar -tf "${connector_tar}")"
+          zip_listing="$(unzip -Z1 "${connector_zip}")"
+          grep -Eq '/bin/forward-neo4j-connector$' <<<"${tar_listing}"
+          grep -Eq '/bin/forward-neo4j-connector$' <<<"${zip_listing}"
           (
             cd build/libs
-            sha256sum "${artifact_name}" "${sbom_name}" > SHA256SUMS
+            sha256sum "${artifact_name}" "${sbom_name}" \
+              "${connector_tar_name}" "${connector_zip_name}" "${connector_sbom_name}" > SHA256SUMS
           )
           echo "artifact=${artifact}" >> "${GITHUB_OUTPUT}"
           echo "sbom=${sbom}" >> "${GITHUB_OUTPUT}"
           echo "checksums=build/libs/SHA256SUMS" >> "${GITHUB_OUTPUT}"
+          echo "connector_tar=${connector_tar}" >> "${GITHUB_OUTPUT}"
+          echo "connector_zip=${connector_zip}" >> "${GITHUB_OUTPUT}"
+          echo "connector_sbom=${connector_sbom}" >> "${GITHUB_OUTPUT}"
       - name: Attest release artifacts
         uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d  # v4
         with:
@@ -65,20 +85,29 @@ jobs:
             ${{ steps.artifact.outputs.artifact }}
             ${{ steps.artifact.outputs.sbom }}
             ${{ steps.artifact.outputs.checksums }}
+            ${{ steps.artifact.outputs.connector_tar }}
+            ${{ steps.artifact.outputs.connector_zip }}
+            ${{ steps.artifact.outputs.connector_sbom }}
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
           ARTIFACT: ${{ steps.artifact.outputs.artifact }}
           SBOM: ${{ steps.artifact.outputs.sbom }}
           CHECKSUMS: ${{ steps.artifact.outputs.checksums }}
+          CONNECTOR_TAR: ${{ steps.artifact.outputs.connector_tar }}
+          CONNECTOR_ZIP: ${{ steps.artifact.outputs.connector_zip }}
+          CONNECTOR_SBOM: ${{ steps.artifact.outputs.connector_sbom }}
         shell: bash
         run: |
           set -euo pipefail
           if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
-            gh release upload "${GITHUB_REF_NAME}" "${ARTIFACT}" "${SBOM}" "${CHECKSUMS}" --clobber
+            gh release upload "${GITHUB_REF_NAME}" \
+              "${ARTIFACT}" "${SBOM}" "${CONNECTOR_TAR}" "${CONNECTOR_ZIP}" "${CONNECTOR_SBOM}" \
+              "${CHECKSUMS}" --clobber
           else
             gh release create "${GITHUB_REF_NAME}" \
-              "${ARTIFACT}" "${SBOM}" "${CHECKSUMS}" \
+              "${ARTIFACT}" "${SBOM}" "${CONNECTOR_TAR}" "${CONNECTOR_ZIP}" "${CONNECTOR_SBOM}" \
+              "${CHECKSUMS}" \
               --verify-tag \
               --title "Forward Neo4j ${GITHUB_REF_NAME}" \
               --generate-notes

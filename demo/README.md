@@ -4,7 +4,8 @@ This directory contains two separate workflows:
 
 1. `synthetic-data.cypher` creates a small graph using invented device names, documentation IP ranges, and no Forward
    credentials. It is safe for demos, screenshots, and query development.
-2. The four NQE `import-*.cypher` scripts execute bundled queries against a configured Forward instance and import real results.
+2. The streamed inventory scripts plus four NQE `import-*.cypher` scripts execute against a configured Forward instance
+   and import real results in bounded transactions.
    Never use that graph for public screenshots or commit its output.
 3. Checks, vulnerabilities, selected details, and paths use specialized Forward APIs.
    Availability follows `FORWARD_LICENSE_TIER`; see [the feature matrix](../docs/LICENSE_PROFILES.md).

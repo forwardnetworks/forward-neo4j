@@ -28,7 +28,9 @@ jobs:
       - name: Validate Gradle wrapper
         uses: gradle/actions/wrapper-validation@3f131e8634966bd73d06cc69884922b02e6faf92  # v6.2.0
       - name: Test, build, and generate SBOM
-        run: ./gradlew --no-daemon clean test jar cyclonedxBom
+        run: >-
+          ./gradlew --no-daemon --max-workers=1 clean :test jar cyclonedxDirectBom
+          :connector:test :connector:distTar :connector:distZip :connector:cyclonedxDirectBom
       - name: Verify release inputs and deployment scripts
         shell: bash
         run: |
@@ -36,15 +38,27 @@ jobs:
           version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' build.gradle.kts)"
           test -n "${version}"
           artifact="build/libs/forward-neo4j-plugin-${version}.jar"
-          sbom="build/reports/cyclonedx/bom.json"
+          sbom="build/reports/cyclonedx-direct/bom.json"
+          connector_tar="connector/build/distributions/forward-neo4j-connector-${version}.tar"
+          connector_zip="connector/build/distributions/forward-neo4j-connector-${version}.zip"
+          connector_sbom="connector/build/reports/cyclonedx-direct/bom.json"
           test -f "${artifact}"
           test -s "${sbom}"
-          jar tf "${artifact}" | grep -Fx nqe/interfaces-v1.nqe
-          jar tf "${artifact}" | grep -Fx nqe/interface-addresses-v1.nqe
-          jar tf "${artifact}" | grep -Fx nqe/network-instances-v1.nqe
-          jar tf "${artifact}" | grep -Fx nqe/bgp-neighbors-v1.nqe
+          test -s "${connector_tar}"
+          test -s "${connector_zip}"
+          test -s "${connector_sbom}"
+          tar_listing="$(tar -tf "${connector_tar}")"
+          zip_listing="$(unzip -Z1 "${connector_zip}")"
+          jar_listing="$(jar tf "${artifact}")"
+          grep -Eq '/bin/forward-neo4j-connector$' <<<"${tar_listing}"
+          grep -Eq '/bin/forward-neo4j-connector$' <<<"${zip_listing}"
+          grep -Fxq nqe/interfaces-v1.nqe <<<"${jar_listing}"
+          grep -Fxq nqe/interface-addresses-v1.nqe <<<"${jar_listing}"
+          grep -Fxq nqe/network-instances-v1.nqe <<<"${jar_listing}"
+          grep -Fxq nqe/bgp-neighbors-v1.nqe <<<"${jar_listing}"
           bash -n demo/run-import.sh deploy/install-neo4j-browser.sh \
-            deploy/install-plugin.sh deploy/verify-install.sh
+            deploy/install-plugin.sh deploy/verify-install.sh \
+            deploy/export-metrics.sh deploy/run-scheduled-import.sh
           fixture="$(mktemp -d)"
           deploy/install-plugin.sh "${artifact}" "${fixture}/neo4j"
           cp "${artifact}" "${fixture}/neo4j/plugins/forward-neo4j-plugin.previous.jar"
@@ -56,12 +70,16 @@ jobs:
           active_plugins="$(find "${fixture}/neo4j/plugins" -maxdepth 1 -type f -name '*.jar' | wc -l)"
           test "${active_plugins}" -eq 1
           cp "${sbom}" "build/libs/forward-neo4j-plugin-${version}.cdx.json"
+          cp "${connector_sbom}" "connector/build/distributions/forward-neo4j-connector-${version}.cdx.json"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: forward-neo4j-plugin
           path: |
             build/libs/forward-neo4j-plugin-*.jar
             build/libs/forward-neo4j-plugin-*.cdx.json
+            connector/build/distributions/forward-neo4j-connector-*.tar
+            connector/build/distributions/forward-neo4j-connector-*.zip
+            connector/build/distributions/forward-neo4j-connector-*.cdx.json
           if-no-files-found: error
 
   container-smoke:

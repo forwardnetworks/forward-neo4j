@@ -8,9 +8,9 @@
 [![Release](https://img.shields.io/github/v/release/forwardnetworks/forward-neo4j)](https://github.com/forwardnetworks/forward-neo4j/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-A self-managed Neo4j plugin that publishes selected Forward Networks data as a snapshot-scoped property graph. It uses
-supported Forward REST APIs, fixed and versioned NQE contracts, and idempotent Cypher imports. It is a reference
-integration—not an export of Forward's internal graph.
+A self-managed Neo4j plugin and an AuraDB-capable external connector that publish selected Forward Networks data as a
+snapshot-scoped property graph. They use supported Forward REST APIs, fixed and versioned NQE contracts, and idempotent
+batched Cypher imports. This is a reference integration—not an export of Forward's internal graph.
 
 ## What it includes
 
@@ -24,6 +24,10 @@ integration—not an export of Forward's internal graph.
 - Optional application ownership, criticality, device, flow, selected Check-detail, and CVE-device correlation.
 - Protected credential-file support, sanitized connectivity checks, bounded GET retries, and redirect refusal.
 - An optional local user service, Docker demo, synthetic dataset, and LAN-access instructions.
+- Incrementally parsed Devices/Topology responses and 5,000-row Neo4j transactions for large estates.
+- Retention preview and explicit, protected snapshot pruning.
+- A single-run systemd timer, overlap lock, and atomic Prometheus textfile exporter.
+- A procedure-free external connector distribution for AuraDB and remotely managed Neo4j.
 - A checksum-verifying atomic plugin installer, local health check, CycloneDX SBOM, and attested release artifacts.
 
 ## Screenshots
@@ -53,7 +57,7 @@ Requirements: Java 21 and Neo4j Community 2026.06.x.
 ```bash
 ./gradlew clean test jar
 install -d ~/.local/state/forward-neo4j/plugins ~/.config/systemd/user ~/.config/forward-neo4j
-deploy/install-plugin.sh build/libs/forward-neo4j-plugin-0.2.1.jar \
+deploy/install-plugin.sh build/libs/forward-neo4j-plugin-0.3.0.jar \
   ~/.local/state/forward-neo4j
 install -m 0644 deploy/neo4j.conf ~/.config/forward-neo4j/neo4j.conf
 install -m 0644 deploy/forward-neo4j.service ~/.config/systemd/user/forward-neo4j.service
@@ -89,6 +93,10 @@ CALL forward.license.features();
 CALL forward.testConnection();
 CALL forward.schema.install();
 CALL forward.import.snapshot("network-id", "snapshot-id");
+CALL forward.inventory.begin("network-id", "snapshot-id");
+CALL forward.inventory.devices.stream("network-id", "snapshot-id");
+CALL forward.inventory.topology.stream("network-id", "snapshot-id");
+CALL forward.inventory.complete("network-id", "snapshot-id", 0);
 CALL forward.import.submit("interfaces-v1", "network-id", "snapshot-id");
 CALL forward.import.begin("interfaces-v1", "network-id", "snapshot-id");
 CALL forward.import.complete("interfaces-v1", "network-id", "snapshot-id", 100, 100);
@@ -96,6 +104,9 @@ CALL forward.import.status("network-id", "snapshot-id");
 CALL forward.snapshot.validate("network-id", "snapshot-id", ["interfaces-v1"]);
 CALL forward.snapshot.publish("network-id", "snapshot-id");
 CALL forward.snapshot.status("network-id", "snapshot-id");
+CALL forward.snapshot.retention.preview("network-id", 2, 30);
+CALL forward.snapshot.prune("network-id", ["explicit-snapshot-id"]);
+CALL forward.metrics.prometheus("network-id");
 CALL forward.nqe.projections();
 CALL forward.nqe.stream("bgp-neighbors-v1", "network-id", "snapshot-id");
 CALL forward.checks.stream("network-id", "snapshot-id");
@@ -135,6 +146,22 @@ Predict boundaries.
 Only these bundled names can be executed. Arbitrary NQE text and credentials are never accepted as Cypher arguments.
 See [NQE contracts and import mappings](docs/NQE.md) for the async lifecycle, stable identities, and full-import commands.
 
+## AuraDB and managed Neo4j
+
+AuraDB cannot load the server plugin. Build or download the separate connector distribution and run it from a trusted
+host with encrypted Bolt connectivity:
+
+```bash
+./gradlew :connector:installDist
+export NEO4J_URI='neo4j+s://example.databases.neo4j.io'
+export NEO4J_USERNAME='neo4j'
+export NEO4J_PASSWORD_FILE="$HOME/.config/forward-neo4j/aura-password"
+connector/build/install/forward-neo4j-connector/bin/forward-neo4j-connector --publish
+```
+
+The connector performs the same streamed inventory, bundled async NQE, license-aware summary imports, structural
+validation, and explicit publication without installing procedures on the database. See [AuraDB connector](docs/AURA.md).
+
 ## API allocation
 
 | Need | Forward API | Integration status |
@@ -158,6 +185,7 @@ findings, and path outcomes. Those results should become snapshot-scoped observa
 - [Checks, vulnerabilities, and curated path imports](docs/DIRECT_APIS.md)
 - [Architecture, graph model, API split, and trust boundaries](docs/ARCHITECTURE.md)
 - [Production lifecycle, validation, publication, and recovery](docs/PRODUCTION.md)
+- [AuraDB and remote connector](docs/AURA.md)
 - [Customer demo runbook](docs/CUSTOMER_DEMO.md)
 - [Synthetic demo](demo/README.md)
 - [Engineering handoff and roadmap](HANDOFF.md)
@@ -166,9 +194,9 @@ findings, and path outcomes. Those results should become snapshot-scoped observa
 
 ## Current boundaries
 
-- The plugin targets self-managed Neo4j. AuraDB needs an external connector using the Neo4j driver.
-- Base Devices/Topology uses set-oriented writes in one Neo4j transaction; large NQE and direct-API imports are batched.
+- The plugin targets self-managed Neo4j; AuraDB uses the included external Neo4j-driver connector.
+- Devices and Topology are incrementally parsed and written in bounded transactions; selected detail APIs intentionally
+  remain operator-curated rather than an unbounded crawl.
 - Partial batches remain restartable and cannot advance `currentSnapshotId` until component and structural validation pass.
 - The repository includes no tenant data, credentials, or screenshots of a live environment.
-- The self-managed reference path is production-oriented for controlled deployments; the documented single-transaction
-  base inventory import remains a scale boundary for very large estates.
+- Scheduled imports are opt-in and disabled by default. Install and enable the timer only after a staged import is reviewed.

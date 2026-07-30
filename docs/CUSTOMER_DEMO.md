@@ -27,6 +27,9 @@ export NEO4J_PASSWORD
 demo/run-import.sh --tier NS --snapshot SNAPSHOT_ID
 ```
 
+The wrapper uses streamed Devices and Topology parsing plus bounded graph transactions. For AuraDB, use the external
+connector with the same tier and snapshot and omit `--publish` on the first pass.
+
 Review job and structural state:
 
 ```cypher

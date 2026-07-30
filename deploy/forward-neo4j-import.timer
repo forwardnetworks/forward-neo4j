@@ -1,0 +1,11 @@
+[Unit]
+Description=Schedule Forward snapshot imports into Neo4j
+
+[Timer]
+OnCalendar=*-*-* 02:00:00
+Persistent=true
+RandomizedDelaySec=30m
+Unit=forward-neo4j-import.service
+
+[Install]
+WantedBy=timers.target
