@@ -20,10 +20,10 @@ repositories {
 
 dependencies {
     compileOnly("org.neo4j:neo4j:$neo4jVersion")
-    compileOnly("com.fasterxml.jackson.core:jackson-databind:2.20.1")
+    compileOnly("com.fasterxml.jackson.core:jackson-databind:2.22.1")
 
     testImplementation("org.junit.jupiter:junit-jupiter:5.13.4")
-    testImplementation("com.fasterxml.jackson.core:jackson-databind:2.20.1")
+    testImplementation("com.fasterxml.jackson.core:jackson-databind:2.22.1")
     testImplementation("org.neo4j.test:neo4j-harness:$neo4jVersion")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
