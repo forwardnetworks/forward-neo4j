@@ -1,6 +1,7 @@
 package com.forwardnetworks.neo4j;
 
 import java.util.Map;
+import java.util.List;
 import java.util.Spliterator;
 import java.util.Spliterators;
 import java.util.stream.Stream;
@@ -142,6 +143,26 @@ public final class ForwardProcedures {
             Map.entry(
                 "pathHop",
                 "CREATE CONSTRAINT forward_path_hop IF NOT EXISTS FOR (n:ForwardPathHop) REQUIRE (n.networkId, n.snapshotId, n.flowName, n.direction, n.pathIndex, n.hopIndex) IS UNIQUE"
+            ),
+            Map.entry(
+                "importJob",
+                "CREATE CONSTRAINT forward_import_job IF NOT EXISTS FOR (n:ForwardImportJob) REQUIRE (n.networkId, n.snapshotId, n.component) IS UNIQUE"
+            ),
+            Map.entry(
+                "application",
+                "CREATE CONSTRAINT forward_application IF NOT EXISTS FOR (n:ForwardApplication) REQUIRE (n.networkId, n.id) IS UNIQUE"
+            ),
+            Map.entry(
+                "owner",
+                "CREATE CONSTRAINT forward_owner IF NOT EXISTS FOR (n:ForwardOwner) REQUIRE (n.networkId, n.name) IS UNIQUE"
+            ),
+            Map.entry(
+                "applicationFlow",
+                "CREATE CONSTRAINT forward_application_flow IF NOT EXISTS FOR (n:ForwardApplicationFlow) REQUIRE (n.networkId, n.applicationId, n.name) IS UNIQUE"
+            ),
+            Map.entry(
+                "checkDiagnosisDetail",
+                "CREATE CONSTRAINT forward_check_diagnosis_detail IF NOT EXISTS FOR (n:ForwardCheckDiagnosisDetail) REQUIRE (n.networkId, n.snapshotId, n.checkId, n.detailIndex) IS UNIQUE"
             )
         );
         statements.values().forEach(transaction::execute);
@@ -183,6 +204,128 @@ public final class ForwardProcedures {
                 durationMillis
             )
         );
+    }
+
+    @Procedure(name = "forward.import.begin", mode = Mode.WRITE)
+    @Description("Starts or restarts a snapshot-scoped component import job without advancing the published snapshot.")
+    public Stream<ImportJobResult> beginImport(
+        @Name("component") String componentName,
+        @Name("networkId") String networkId,
+        @Name("snapshotId") String snapshotId
+    ) {
+        requireIdentifier(networkId, "networkId");
+        requireIdentifier(snapshotId, "snapshotId");
+        var component = ImportComponent.named(componentName);
+        ForwardConfig.licenseTier(System.getenv(), System.getProperties()).require(component.feature());
+        return Stream.of(importJobResult(new ImportJobManager(transaction).begin(networkId, snapshotId, component)));
+    }
+
+    @Procedure(name = "forward.import.submit", mode = Mode.WRITE)
+    @Description("Registers a component import as submitted without starting graph writes or advancing publication.")
+    public Stream<ImportJobResult> submitImport(
+        @Name("component") String componentName,
+        @Name("networkId") String networkId,
+        @Name("snapshotId") String snapshotId
+    ) {
+        requireIdentifier(networkId, "networkId");
+        requireIdentifier(snapshotId, "snapshotId");
+        var component = ImportComponent.named(componentName);
+        ForwardConfig.licenseTier(System.getenv(), System.getProperties()).require(component.feature());
+        return Stream.of(importJobResult(new ImportJobManager(transaction).submit(networkId, snapshotId, component)));
+    }
+
+    @Procedure(name = "forward.import.complete", mode = Mode.WRITE)
+    @Description("Completes a component import and validates its streamed row count when an expected count is supplied.")
+    public Stream<ImportJobResult> completeImport(
+        @Name("component") String componentName,
+        @Name("networkId") String networkId,
+        @Name("snapshotId") String snapshotId,
+        @Name("rowsImported") long rowsImported,
+        @Name(value = "expectedRows", defaultValue = "-1") long expectedRows
+    ) {
+        requireIdentifier(networkId, "networkId");
+        requireIdentifier(snapshotId, "snapshotId");
+        var component = ImportComponent.named(componentName);
+        ForwardConfig.licenseTier(System.getenv(), System.getProperties()).require(component.feature());
+        return Stream.of(importJobResult(
+            new ImportJobManager(transaction).complete(
+                networkId,
+                snapshotId,
+                component,
+                rowsImported,
+                expectedRows
+            )
+        ));
+    }
+
+    @Procedure(name = "forward.import.fail", mode = Mode.WRITE)
+    @Description("Marks a component import failed so an incomplete snapshot cannot be published.")
+    public Stream<ImportJobResult> failImport(
+        @Name("component") String componentName,
+        @Name("networkId") String networkId,
+        @Name("snapshotId") String snapshotId,
+        @Name("error") String error
+    ) {
+        requireIdentifier(networkId, "networkId");
+        requireIdentifier(snapshotId, "snapshotId");
+        var component = ImportComponent.named(componentName);
+        return Stream.of(importJobResult(
+            new ImportJobManager(transaction).fail(networkId, snapshotId, component, error)
+        ));
+    }
+
+    @Procedure(name = "forward.import.status", mode = Mode.READ)
+    @Description("Lists component import states and row-count validation for one snapshot.")
+    public Stream<ImportJobResult> importStatus(
+        @Name("networkId") String networkId,
+        @Name("snapshotId") String snapshotId
+    ) {
+        requireIdentifier(networkId, "networkId");
+        requireIdentifier(snapshotId, "snapshotId");
+        return new ImportJobManager(transaction).jobs(networkId, snapshotId).stream().map(ForwardProcedures::importJobResult);
+    }
+
+    @Procedure(name = "forward.snapshot.validate", mode = Mode.WRITE)
+    @Description("Validates required component jobs and graph structure without publishing the snapshot.")
+    public Stream<SnapshotValidationResult> validateSnapshot(
+        @Name("networkId") String networkId,
+        @Name("snapshotId") String snapshotId,
+        @Name("requiredComponents") List<String> requiredComponentNames
+    ) {
+        requireIdentifier(networkId, "networkId");
+        requireIdentifier(snapshotId, "snapshotId");
+        if (requiredComponentNames == null) {
+            throw new IllegalArgumentException("requiredComponents must be a list; inventory is always required");
+        }
+        var tier = ForwardConfig.licenseTier(System.getenv(), System.getProperties());
+        List<ImportComponent> components = requiredComponentNames.stream().map(ImportComponent::named).distinct().toList();
+        components.forEach(component -> tier.require(component.feature()));
+        var validation = new ImportJobManager(transaction).validate(networkId, snapshotId, components);
+        return Stream.of(new SnapshotValidationResult(validation));
+    }
+
+    @Procedure(name = "forward.snapshot.publish", mode = Mode.WRITE)
+    @Description("Atomically advances the current-snapshot pointer to a structurally validated snapshot.")
+    public Stream<SnapshotPublicationResult> publishSnapshot(
+        @Name("networkId") String networkId,
+        @Name("snapshotId") String snapshotId
+    ) {
+        requireIdentifier(networkId, "networkId");
+        requireIdentifier(snapshotId, "snapshotId");
+        return Stream.of(new SnapshotPublicationResult(
+            new ImportJobManager(transaction).publish(networkId, snapshotId)
+        ));
+    }
+
+    @Procedure(name = "forward.snapshot.status", mode = Mode.READ)
+    @Description("Reports staged, validated, and published state for one imported snapshot.")
+    public Stream<SnapshotStatusResult> snapshotStatus(
+        @Name("networkId") String networkId,
+        @Name("snapshotId") String snapshotId
+    ) {
+        requireIdentifier(networkId, "networkId");
+        requireIdentifier(snapshotId, "snapshotId");
+        return Stream.of(new SnapshotStatusResult(new ImportJobManager(transaction).snapshot(networkId, snapshotId)));
     }
 
     @Procedure(name = "forward.nqe.projections", mode = Mode.READ)
@@ -363,6 +506,22 @@ public final class ForwardProcedures {
         }
     }
 
+    private static ImportJobResult importJobResult(ImportJobManager.JobData job) {
+        return new ImportJobResult(
+            job.networkId(),
+            job.snapshotId(),
+            job.component(),
+            job.state(),
+            job.attempt(),
+            job.rowsImported(),
+            job.expectedRows(),
+            job.submittedAt(),
+            job.startedAt(),
+            job.completedAt(),
+            job.error()
+        );
+    }
+
     public static final class PluginInfoResult {
         public final String version;
         public final boolean forwardUrlConfigured;
@@ -474,6 +633,120 @@ public final class ForwardProcedures {
             this.links = links;
             this.skippedLinks = skippedLinks;
             this.durationMillis = durationMillis;
+        }
+    }
+
+    public static final class ImportJobResult {
+        public final String networkId;
+        public final String snapshotId;
+        public final String component;
+        public final String state;
+        public final long attempt;
+        public final Long rowsImported;
+        public final Long expectedRows;
+        public final String submittedAt;
+        public final String startedAt;
+        public final String completedAt;
+        public final String error;
+
+        ImportJobResult(
+            String networkId,
+            String snapshotId,
+            String component,
+            String state,
+            long attempt,
+            Long rowsImported,
+            Long expectedRows,
+            String submittedAt,
+            String startedAt,
+            String completedAt,
+            String error
+        ) {
+            this.networkId = networkId;
+            this.snapshotId = snapshotId;
+            this.component = component;
+            this.state = state;
+            this.attempt = attempt;
+            this.rowsImported = rowsImported;
+            this.expectedRows = expectedRows;
+            this.submittedAt = submittedAt;
+            this.startedAt = startedAt;
+            this.completedAt = completedAt;
+            this.error = error;
+        }
+    }
+
+    public static final class SnapshotValidationResult {
+        public final String networkId;
+        public final String snapshotId;
+        public final String state;
+        public final List<String> requiredComponents;
+        public final List<String> missingComponents;
+        public final List<String> errors;
+        public final long devices;
+        public final long orphanInterfaces;
+        public final long orphanAddresses;
+        public final long orphanNetworkInstances;
+        public final long orphanBgpNeighbors;
+        public final long crossSnapshotLinks;
+
+        SnapshotValidationResult(ImportJobManager.ValidationData validation) {
+            this.networkId = validation.networkId();
+            this.snapshotId = validation.snapshotId();
+            this.state = validation.state();
+            this.requiredComponents = validation.requiredComponents();
+            this.missingComponents = validation.missingComponents();
+            this.errors = validation.errors();
+            this.devices = validation.devices();
+            this.orphanInterfaces = validation.orphanInterfaces();
+            this.orphanAddresses = validation.orphanAddresses();
+            this.orphanNetworkInstances = validation.orphanNetworkInstances();
+            this.orphanBgpNeighbors = validation.orphanBgpNeighbors();
+            this.crossSnapshotLinks = validation.crossSnapshotLinks();
+        }
+    }
+
+    public static final class SnapshotPublicationResult {
+        public final String networkId;
+        public final String snapshotId;
+        public final String previousSnapshotId;
+        public final String publishedAt;
+        public final List<String> components;
+
+        SnapshotPublicationResult(ImportJobManager.PublicationData publication) {
+            this.networkId = publication.networkId();
+            this.snapshotId = publication.snapshotId();
+            this.previousSnapshotId = publication.previousSnapshotId();
+            this.publishedAt = publication.publishedAt();
+            this.components = publication.components();
+        }
+    }
+
+    public static final class SnapshotStatusResult {
+        public final String networkId;
+        public final String snapshotId;
+        public final String publicationState;
+        public final String validationState;
+        public final List<String> validatedComponents;
+        public final List<String> validationErrors;
+        public final String currentSnapshotId;
+        public final String candidateSnapshotId;
+        public final String importedAt;
+        public final String validatedAt;
+        public final String publishedAt;
+
+        SnapshotStatusResult(ImportJobManager.SnapshotState snapshot) {
+            this.networkId = snapshot.networkId();
+            this.snapshotId = snapshot.snapshotId();
+            this.publicationState = snapshot.publicationState();
+            this.validationState = snapshot.validationState();
+            this.validatedComponents = snapshot.validatedComponents();
+            this.validationErrors = snapshot.validationErrors();
+            this.currentSnapshotId = snapshot.currentSnapshotId();
+            this.candidateSnapshotId = snapshot.candidateSnapshotId();
+            this.importedAt = snapshot.importedAt();
+            this.validatedAt = snapshot.validatedAt();
+            this.publishedAt = snapshot.publishedAt();
         }
     }
 

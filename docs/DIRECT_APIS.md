@@ -28,7 +28,8 @@ cypher-shell -a bolt://127.0.0.1:7687 -u neo4j \
 ```
 
 The graph stores check identity, type, status, priority, violation count, selected timestamps, and tags. Diagnosis stays
-on-demand because it can be large and is meaningful only for a selected check.
+on-demand by default because it can be large. `demo/import-check-details.cypher` materializes only operator-selected
+Check IDs as `ForwardCheckDiagnosisDetail` nodes and links exact reference-key matches to existing devices.
 
 ## Vulnerability analysis
 
@@ -57,7 +58,8 @@ cypher-shell -a bolt://127.0.0.1:7687 -u neo4j \
 
 `ForwardVulnerability` is keyed by CVE within a network snapshot. `ForwardVulnerabilityOs` preserves vendor, OS,
 severity, CVSS scores, affected-version lists, and detection-result counts. The summary importer does not create an
-affected-device edge without the device-level detail response.
+affected-device edge without the device-level detail response. `demo/import-vulnerability-details.cypher` accepts an
+explicit CVE list and creates `AFFECTS` relationships only for exact device names already present in the snapshot.
 
 ## Curated Bulk Path Search
 
@@ -103,7 +105,8 @@ cypher-shell -a bolt://127.0.0.1:7687 -u neo4j \
 
 `ForwardPathObservation` stores the query and overall response. `ForwardPathResult` preserves forward/return direction
 and outcomes. Ordered `HAS_HOP {index}` relationships point to `ForwardPathHop` nodes, which link to existing devices
-only when Forward supplies a device name.
+only when Forward supplies a device name that matches inventory. Adjacent hops also receive a `NEXT_HOP` relationship;
+this is an ordered path observation, not a physical-topology edge.
 
 ## Read-only Forward boundary
 

@@ -164,9 +164,15 @@ Edit `~/.config/forward-neo4j/neo4j.conf` and replace the four loopback connecto
 ```properties
 server.http.listen_address=0.0.0.0:7474
 server.http.advertised_address=192.168.1.50:7474
+server.http.x_forward.enabled=false
 server.bolt.listen_address=0.0.0.0:7687
 server.bolt.advertised_address=192.168.1.50:7687
+server.fleet_discovery.enabled=false
 ```
+
+The reference service is not behind a reverse proxy, so it ignores `X-Forwarded-*` headers and disables standalone
+Fleet discovery broadcasts. If a trusted reverse proxy is added later, enable forwarded-header processing only with
+explicit `server.http.x_forward.allow_proxies` and `server.http.x_forward.allow_hosts` values.
 
 For UFW, permit only the local subnet:
 

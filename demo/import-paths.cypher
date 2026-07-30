@@ -69,9 +69,24 @@ CALL (networkId, snapshotId, index, name, query, result) {
       pathHop.parseError = hop.parseError,
       pathHop.backfilledFrom = hop.backfilledFrom
   MERGE (pathResult)-[:HAS_HOP {index: hopIndex}]->(pathHop)
-  FOREACH (_ IN CASE WHEN hop.deviceName IS NOT NULL THEN [1] ELSE [] END |
-    MERGE (device:ForwardDevice {networkId: networkId, snapshotId: snapshotId, id: hop.deviceName})
+  WITH pathResult, pathHop, networkId, snapshotId, hop
+  OPTIONAL MATCH (device:ForwardDevice {
+    networkId: networkId,
+    snapshotId: snapshotId,
+    id: hop.deviceName
+  })
+  FOREACH (_ IN CASE WHEN device IS NULL THEN [] ELSE [1] END |
     MERGE (pathHop)-[:OBSERVED_AT]->(device)
+  )
+  WITH pathResult, pathHop
+  ORDER BY pathHop.hopIndex
+  WITH pathResult, collect(pathHop) AS orderedHops
+  FOREACH (hopIndex IN CASE WHEN size(orderedHops) < 2 THEN [] ELSE range(0, size(orderedHops) - 2) END |
+    FOREACH (left IN [orderedHops[hopIndex]] |
+      FOREACH (right IN [orderedHops[hopIndex + 1]] |
+        MERGE (left)-[:NEXT_HOP]->(right)
+      )
+    )
   )
 } IN TRANSACTIONS OF 100 ROWS ON ERROR RETRY FOR 30 SECONDS THEN FAIL
 RETURN count(*) AS importedRows;

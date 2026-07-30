@@ -13,3 +13,5 @@ plugins/
 *.token
 credentials/
 release/
+demo/local/
+demo/*.local.*

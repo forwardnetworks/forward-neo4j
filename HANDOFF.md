@@ -18,6 +18,14 @@ CALL forward.license.features();
 CALL forward.testConnection();
 CALL forward.schema.install();
 CALL forward.import.snapshot("network-id", "snapshot-id");
+CALL forward.import.submit("interfaces-v1", "network-id", "snapshot-id");
+CALL forward.import.begin("interfaces-v1", "network-id", "snapshot-id");
+CALL forward.import.complete("interfaces-v1", "network-id", "snapshot-id", 100, 100);
+CALL forward.import.fail("interfaces-v1", "network-id", "snapshot-id", "bounded error");
+CALL forward.import.status("network-id", "snapshot-id");
+CALL forward.snapshot.validate("network-id", "snapshot-id", ["interfaces-v1"]);
+CALL forward.snapshot.publish("network-id", "snapshot-id");
+CALL forward.snapshot.status("network-id", "snapshot-id");
 CALL forward.nqe.projections();
 CALL forward.nqe.stream("bgp-neighbors-v1", "network-id", "snapshot-id");
 CALL forward.checks.stream("network-id", "snapshot-id");
@@ -51,6 +59,11 @@ It does not modify Forward network data.
 8. **License-aware selection.** The explicit `B`, `N`, `NP`, `S`, `NS`, or `NSP` selector gates calls locally. Base
    gets inventory plus compatible interface NQEs; routing NQEs require Network; Checks/Paths require Network or
    Security; vulnerabilities require Security.
+9. **Publication gate.** Imports stage a candidate snapshot. Component jobs move through `SUBMITTED`, `IMPORTING`,
+   `VALIDATED`, or `FAILED`; structural validation must pass before an explicit atomic publication updates
+   `ForwardNetwork.currentSnapshotId`.
+10. **Business context is asserted, not inferred.** Applications, owners, criticality, device membership, and flow
+    definitions are operator-supplied. Selected Check and CVE detail uses exact Forward identities only.
 
 ## Runtime and security behavior
 
@@ -76,21 +89,21 @@ in an isolated Neo4j home, never from an existing graph.
 
 ## Known gaps
 
-1. `forward.import.snapshot()` downloads and writes base inventory/topology in one transaction.
-2. Projection-run markers are updated per row, which adds lock traffic.
-3. A zero-row NQE stream currently creates no graph marker.
-4. There is no validation/publication job state machine or pruning policy.
-5. Check diagnoses and CVE device details are exposed on demand but are not bulk-imported.
-6. Path imports preserve hop order but do not yet materialize a separate `NEXT_HOP` relationship chain.
-7. AuraDB requires an external connector rather than this self-managed plugin.
+1. `forward.import.snapshot()` uses set-oriented writes but still downloads and writes base inventory/topology in one
+   Neo4j transaction.
+2. `ForwardProjectionRun` markers are updated per NQE row; component jobs avoid ambiguity, but the lock traffic remains.
+3. A zero-row NQE has a validated component job but no row-derived `ForwardProjectionRun` provenance node.
+4. Snapshot retention and pruning policy are not implemented.
+5. Check and vulnerability detail materialization is intentionally selected-ID only, not an unbounded bulk crawl.
+6. AuraDB requires an external connector rather than this self-managed plugin.
 
 ## Next build order
 
-1. Add a projection-job node with `SUBMITTED`, `IMPORTING`, `VALIDATED`, `PUBLISHED`, and `FAILED` states.
-2. Add optional bulk materialization for selected check diagnoses and CVE device details.
-3. Add validation queries and publication gates for Checks, vulnerabilities, and paths.
-4. Stream/batch Devices and Topology and validate counts before advancing a snapshot publication pointer.
-5. Add multi-snapshot change examples and retention rules.
+1. Add a streamed/batched Devices and Topology surface for very large estates.
+2. Move NQE projection provenance updates out of the per-row importer transaction.
+3. Add multi-snapshot change examples, retention rules, and safe pruning procedures.
+4. Add a scheduler/metrics surface for unattended operation after the import contract stabilizes.
+5. Build an external connector for AuraDB.
 
 ## Positioning guardrail
 

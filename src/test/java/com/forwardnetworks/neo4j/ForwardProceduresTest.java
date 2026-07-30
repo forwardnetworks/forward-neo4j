@@ -2,6 +2,7 @@ package com.forwardnetworks.neo4j;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -60,7 +61,7 @@ class ForwardProceduresTest {
             .build()) {
             try (var driver = org.neo4j.driver.GraphDatabase.driver(neo4j.boltURI())) {
                 assertEquals(
-                    15,
+                    20,
                     driver.executableQuery("CALL forward.schema.install()")
                         .execute()
                         .records()
@@ -69,7 +70,7 @@ class ForwardProceduresTest {
                         .asLong()
                 );
                 assertEquals(
-                    15,
+                    20,
                     driver.executableQuery("CALL forward.schema.install()")
                         .execute()
                         .records()
@@ -128,7 +129,10 @@ class ForwardProceduresTest {
             "import-bgp-neighbors.cypher",
             "import-checks.cypher",
             "import-vulnerabilities.cypher",
-            "import-paths.cypher"
+            "import-vulnerability-details.cypher",
+            "import-check-details.cypher",
+            "import-paths.cypher",
+            "import-business-context.cypher"
         );
         try (Neo4j neo4j = Neo4jBuilders.newInProcessBuilder()
             .withDisabledServer()
@@ -150,11 +154,258 @@ class ForwardProceduresTest {
                                 "srcIp", "192.0.2.10",
                                 "dstIp", "198.51.100.20"
                             )),
-                            "pathOptions", Map.of("maxResults", 1)
+                            "pathOptions", Map.of("maxResults", 1),
+                            "cveIds", List.of("CVE-2099-0001"),
+                            "checkIds", List.of("check-1"),
+                            "applications", List.of(Map.of(
+                                "id", "sample-app",
+                                "name", "Sample Application",
+                                "deviceNames", List.of("router-a"),
+                                "flows", List.of()
+                            ))
                         )
                     ).consume();
                 }
             }
+        }
+    }
+
+    @Test
+    void customerDemoQueriesCompile() throws IOException {
+        try (Neo4j neo4j = Neo4jBuilders.newInProcessBuilder()
+            .withDisabledServer()
+            .withProcedure(ForwardProcedures.class)
+            .build();
+            var driver = org.neo4j.driver.GraphDatabase.driver(neo4j.boltURI());
+            var session = driver.session()) {
+            String script = Files.readString(Path.of("demo", "customer-demo.cypher"));
+            for (String statement : script.split(";\\s*(?:\\R|$)")) {
+                if (!statement.isBlank()) {
+                    session.run("EXPLAIN " + statement, Map.of("networkId", "network-1")).consume();
+                }
+            }
+        }
+    }
+
+    @Test
+    void validatesComponentsBeforeAtomicallyPublishingSnapshot() {
+        try (Neo4j neo4j = Neo4jBuilders.newInProcessBuilder()
+            .withDisabledServer()
+            .withProcedure(ForwardProcedures.class)
+            .build();
+            var driver = org.neo4j.driver.GraphDatabase.driver(neo4j.boltURI())) {
+            driver.executableQuery("CALL forward.schema.install()").execute();
+            driver.executableQuery(
+                """
+                MERGE (network:ForwardNetwork {id: 'network-1'})
+                SET network.candidateSnapshotId = 'snapshot-1'
+                MERGE (snapshot:ForwardSnapshot {networkId: 'network-1', id: 'snapshot-1'})
+                SET snapshot.publicationState = 'STAGED', snapshot.validationState = 'PENDING',
+                    snapshot.importedAt = datetime()
+                MERGE (network)-[:HAS_SNAPSHOT]->(snapshot)
+                MERGE (device:ForwardDevice {networkId: 'network-1', snapshotId: 'snapshot-1', id: 'router-a'})
+                MERGE (snapshot)-[:CONTAINS]->(device)
+                MERGE (job:ForwardImportJob {
+                  networkId: 'network-1', snapshotId: 'snapshot-1', component: 'inventory'
+                })
+                SET job.state = 'VALIDATED', job.attempt = 1, job.rowsImported = 1
+                MERGE (snapshot)-[:HAS_IMPORT_JOB]->(job)
+                """
+            ).execute();
+
+            var submitted = driver.executableQuery(
+                "CALL forward.import.submit('interfaces-v1', 'network-1', 'snapshot-1')"
+            ).execute().records().getFirst();
+            assertEquals("SUBMITTED", submitted.get("state").asString());
+
+            var started = driver.executableQuery(
+                "CALL forward.import.begin('interfaces-v1', 'network-1', 'snapshot-1')"
+            ).execute().records().getFirst();
+            assertEquals("IMPORTING", started.get("state").asString());
+
+            var completed = driver.executableQuery(
+                "CALL forward.import.complete('interfaces-v1', 'network-1', 'snapshot-1', 2, 2)"
+            ).execute().records().getFirst();
+            assertEquals("VALIDATED", completed.get("state").asString());
+
+            var validation = driver.executableQuery(
+                "CALL forward.snapshot.validate('network-1', 'snapshot-1', ['interfaces-v1'])"
+            ).execute().records().getFirst();
+            assertEquals("VALIDATED", validation.get("state").asString());
+            assertTrue(validation.get("errors").asList().isEmpty());
+
+            var publication = driver.executableQuery(
+                "CALL forward.snapshot.publish('network-1', 'snapshot-1')"
+            ).execute().records().getFirst();
+            assertEquals("snapshot-1", publication.get("snapshotId").asString());
+            var repeatedPublication = driver.executableQuery(
+                "CALL forward.snapshot.publish('network-1', 'snapshot-1')"
+            ).execute().records().getFirst();
+            assertEquals("snapshot-1", repeatedPublication.get("snapshotId").asString());
+
+            var status = driver.executableQuery(
+                "CALL forward.snapshot.status('network-1', 'snapshot-1')"
+            ).execute().records().getFirst();
+            assertEquals("PUBLISHED", status.get("publicationState").asString());
+            assertEquals("snapshot-1", status.get("currentSnapshotId").asString());
+            assertTrue(status.get("candidateSnapshotId").isNull());
+            assertThrows(
+                Exception.class,
+                () -> driver.executableQuery(
+                    "CALL forward.import.begin('interfaces-v1', 'network-1', 'snapshot-1')"
+                ).execute()
+            );
+        }
+    }
+
+    @Test
+    void rowCountMismatchBlocksSnapshotValidation() {
+        try (Neo4j neo4j = Neo4jBuilders.newInProcessBuilder()
+            .withDisabledServer()
+            .withProcedure(ForwardProcedures.class)
+            .build();
+            var driver = org.neo4j.driver.GraphDatabase.driver(neo4j.boltURI())) {
+            driver.executableQuery(
+                """
+                CREATE (network:ForwardNetwork {id: 'network-1', candidateSnapshotId: 'snapshot-1'})
+                CREATE (snapshot:ForwardSnapshot {
+                  networkId: 'network-1', id: 'snapshot-1', publicationState: 'STAGED', validationState: 'PENDING'
+                })
+                CREATE (network)-[:HAS_SNAPSHOT]->(snapshot)
+                CREATE (device:ForwardDevice {networkId: 'network-1', snapshotId: 'snapshot-1', id: 'router-a'})
+                CREATE (snapshot)-[:CONTAINS]->(device)
+                CREATE (inventory:ForwardImportJob {
+                  networkId: 'network-1', snapshotId: 'snapshot-1', component: 'inventory',
+                  state: 'VALIDATED', attempt: 1
+                })
+                CREATE (snapshot)-[:HAS_IMPORT_JOB]->(inventory)
+                """
+            ).execute();
+
+            driver.executableQuery(
+                "CALL forward.import.begin('interface-addresses-v1', 'network-1', 'snapshot-1')"
+            ).execute();
+            var failed = driver.executableQuery(
+                "CALL forward.import.complete('interface-addresses-v1', 'network-1', 'snapshot-1', 3, 4)"
+            ).execute().records().getFirst();
+            assertEquals("FAILED", failed.get("state").asString());
+
+            var validation = driver.executableQuery(
+                "CALL forward.snapshot.validate('network-1', 'snapshot-1', ['interface-addresses-v1'])"
+            ).execute().records().getFirst();
+            assertEquals("INVALID", validation.get("state").asString());
+            assertEquals(List.of("interface-addresses-v1"), validation.get("missingComponents").asList(value -> value.asString()));
+            assertThrows(
+                Exception.class,
+                () -> driver.executableQuery(
+                    "CALL forward.snapshot.publish('network-1', 'snapshot-1')"
+                ).execute()
+            );
+        }
+    }
+
+    @Test
+    void syntheticDatasetExercisesPublishedCrossDomainGraph() throws IOException {
+        System.setProperty("forward.licenseTier", "NS");
+        try (Neo4j neo4j = Neo4jBuilders.newInProcessBuilder()
+            .withDisabledServer()
+            .withProcedure(ForwardProcedures.class)
+            .build();
+            var driver = org.neo4j.driver.GraphDatabase.driver(neo4j.boltURI());
+            var session = driver.session()) {
+            String script = Files.readString(Path.of("demo", "synthetic-data.cypher"));
+            for (String statement : script.split(";\\s*(?:\\R|$)")) {
+                if (!statement.isBlank()) {
+                    session.run(statement).consume();
+                }
+            }
+
+            var status = session.run(
+                "CALL forward.snapshot.status('demo-network', 'demo-snapshot')"
+            ).single();
+            assertEquals("PUBLISHED", status.get("publicationState").asString());
+            assertEquals("VALIDATED", status.get("validationState").asString());
+
+            var crossDomain = session.run(
+                """
+                MATCH (:ForwardApplication)-[:RUNS_ON]->(device:ForwardDevice)
+                OPTIONAL MATCH (:ForwardVulnerability)-[:AFFECTS]->(device)
+                OPTIONAL MATCH (:ForwardApplicationFlow)-[:EVALUATED_AS]->(:ForwardPathObservation)
+                  -[:HAS_PATH]->(:ForwardPathResult)-[:HAS_HOP]->(hop:ForwardPathHop)
+                OPTIONAL MATCH (:ForwardPathHop)-[next:NEXT_HOP]->(:ForwardPathHop)
+                RETURN count(DISTINCT device) AS applicationDevices,
+                       count(DISTINCT hop) AS pathHops,
+                       count(DISTINCT next) AS nextHopRelationships
+                """
+            ).single();
+            assertEquals(2, crossDomain.get("applicationDevices").asLong());
+            assertEquals(2, crossDomain.get("pathHops").asLong());
+            assertEquals(1, crossDomain.get("nextHopRelationships").asLong());
+        }
+    }
+
+    @Test
+    void businessContextRejectsUnknownDevicesWithoutCreatingInventory() throws IOException {
+        try (Neo4j neo4j = Neo4jBuilders.newInProcessBuilder()
+            .withDisabledServer()
+            .withProcedure(ForwardProcedures.class)
+            .build();
+            var driver = org.neo4j.driver.GraphDatabase.driver(neo4j.boltURI());
+            var session = driver.session()) {
+            session.run(
+                """
+                CREATE (network:ForwardNetwork {id: 'network-1', candidateSnapshotId: 'snapshot-1'})
+                CREATE (snapshot:ForwardSnapshot {
+                  networkId: 'network-1', id: 'snapshot-1', publicationState: 'STAGED', validationState: 'PENDING'
+                })
+                CREATE (network)-[:HAS_SNAPSHOT]->(snapshot)
+                CREATE (device:ForwardDevice {networkId: 'network-1', snapshotId: 'snapshot-1', id: 'router-a'})
+                CREATE (snapshot)-[:CONTAINS]->(device)
+                """
+            ).consume();
+            String importer = Files.readString(Path.of("demo", "import-business-context.cypher"));
+            Map<String, Object> baseParameters = Map.of(
+                "networkId", "network-1",
+                "snapshotId", "snapshot-1",
+                "applications", List.of(Map.of(
+                    "id", "app-1",
+                    "name", "Application One",
+                    "deviceNames", List.of("missing-device"),
+                    "flows", List.of()
+                ))
+            );
+            assertTrue(session.run(importer, baseParameters).list().isEmpty());
+
+            var rejected = session.run(
+                """
+                MATCH (job:ForwardImportJob {component: 'business-context'})
+                OPTIONAL MATCH (placeholder:ForwardDevice {id: 'missing-device'})
+                RETURN job.state AS state, count(placeholder) AS placeholders
+                """
+            ).single();
+            assertEquals("IMPORTING", rejected.get("state").asString());
+            assertEquals(0, rejected.get("placeholders").asLong());
+
+            Map<String, Object> validParameters = Map.of(
+                "networkId", "network-1",
+                "snapshotId", "snapshot-1",
+                "applications", List.of(Map.of(
+                    "id", "app-1",
+                    "name", "Application One",
+                    "deviceNames", List.of("router-a"),
+                    "flows", List.of(Map.of(
+                        "name", "app-flow",
+                        "srcIp", "192.0.2.10",
+                        "dstIp", "198.51.100.20"
+                    ))
+                ))
+            );
+            var imported = session.run(importer, validParameters).single();
+            assertEquals("VALIDATED", imported.get("state").asString());
+            assertEquals(1, imported.get("importedRows").asLong());
+            assertEquals(1, session.run(
+                "MATCH (:ForwardApplication)-[deployment:RUNS_ON]->(:ForwardDevice) RETURN count(deployment) AS count"
+            ).single().get("count").asLong());
         }
     }
 

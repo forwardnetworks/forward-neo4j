@@ -19,7 +19,8 @@ integration—not an export of Forward's internal graph.
 - Direct read integrations for Checks, vulnerability analysis, and curated Bulk Path Search.
 - Selectable `B`, `N`, `NP`, `S`, `NS`, and `NSP` profiles that fail locally before calling an unavailable feature.
 - Snapshot identity, projection version, source SHA-256, and execution provenance on imported graph data.
-- Nine uniqueness constraints and restartable imports in 5,000-row transactions.
+- Twenty uniqueness constraints, component import jobs, structural validation, and explicit snapshot publication.
+- Optional application ownership, criticality, device, flow, selected Check-detail, and CVE-device correlation.
 - Protected credential-file support, sanitized connectivity checks, bounded GET retries, and redirect refusal.
 - An optional local user service, Docker demo, synthetic dataset, and LAN-access instructions.
 
@@ -71,6 +72,13 @@ CALL forward.license.features();
 CALL forward.testConnection();
 CALL forward.schema.install();
 CALL forward.import.snapshot("network-id", "snapshot-id");
+CALL forward.import.submit("interfaces-v1", "network-id", "snapshot-id");
+CALL forward.import.begin("interfaces-v1", "network-id", "snapshot-id");
+CALL forward.import.complete("interfaces-v1", "network-id", "snapshot-id", 100, 100);
+CALL forward.import.status("network-id", "snapshot-id");
+CALL forward.snapshot.validate("network-id", "snapshot-id", ["interfaces-v1"]);
+CALL forward.snapshot.publish("network-id", "snapshot-id");
+CALL forward.snapshot.status("network-id", "snapshot-id");
 CALL forward.nqe.projections();
 CALL forward.nqe.stream("bgp-neighbors-v1", "network-id", "snapshot-id");
 CALL forward.checks.stream("network-id", "snapshot-id");
@@ -132,6 +140,8 @@ findings, and path outcomes. Those results should become snapshot-scoped observa
 - [NQE sources, async execution, identities, and imports](docs/NQE.md)
 - [Checks, vulnerabilities, and curated path imports](docs/DIRECT_APIS.md)
 - [Architecture, graph model, API split, and trust boundaries](docs/ARCHITECTURE.md)
+- [Production lifecycle, validation, publication, and recovery](docs/PRODUCTION.md)
+- [Customer demo runbook](docs/CUSTOMER_DEMO.md)
 - [Synthetic demo](demo/README.md)
 - [Engineering handoff and roadmap](HANDOFF.md)
 - [Security policy](SECURITY.md)
@@ -140,6 +150,6 @@ findings, and path outcomes. Those results should become snapshot-scoped observa
 ## Current boundaries
 
 - The plugin targets self-managed Neo4j. AuraDB needs an external connector using the Neo4j driver.
-- The base Devices/Topology import is one Neo4j procedure transaction; the large NQE imports are batched.
-- A failed later NQE batch leaves earlier idempotent batches committed. Validate the projection run before publication.
+- Base Devices/Topology uses set-oriented writes in one Neo4j transaction; large NQE and direct-API imports are batched.
+- Partial batches remain restartable and cannot advance `currentSnapshotId` until component and structural validation pass.
 - The repository includes no tenant data, credentials, or screenshots of a live environment.

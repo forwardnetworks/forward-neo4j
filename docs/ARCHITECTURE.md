@@ -30,10 +30,19 @@ flowchart TD
     B -->|RESOLVES_TO_DEVICE| PD[ForwardDevice]
     B -->|RESOLVES_TO_NETWORK_INSTANCE| PV[ForwardNetworkInstance]
     S -->|HAS_PROJECTION| R[ForwardProjectionRun]
+    S -->|HAS_IMPORT_JOB| J[ForwardImportJob]
+    S -->|HAS_CHECK| C[ForwardCheckObservation]
+    S -->|HAS_VULNERABILITY| CVE[ForwardVulnerability]
+    S -->|HAS_PATH_OBSERVATION| P[ForwardPathObservation]
+    O[ForwardOwner] -->|OWNS| A[ForwardApplication]
+    A -->|RUNS_ON| D
+    A -->|HAS_FLOW| F[ForwardApplicationFlow]
+    F -->|EVALUATED_AS| P
 ```
 
-All Forward-derived identities are snapshot-scoped. `ForwardNetwork.currentSnapshotId` is a convenience pointer; it is
-not a reason to discard historical snapshots.
+All Forward-derived identities are snapshot-scoped. Stable operator context is network-scoped and relates to devices or
+observations with an explicit snapshot identifier. `ForwardNetwork.currentSnapshotId` advances only after structural
+validation and explicit publication; it is not a reason to discard historical snapshots.
 
 ## API split
 
@@ -69,4 +78,6 @@ a permanent physical edge, and a failed check is not a topology relationship.
 - Each NQE submission is at-most-once from the caller's perspective because POST is not retried.
 - Result reads are lazy and GET retries are bounded.
 - Batched imports may be partially committed. Stable identities make a rerun idempotent.
-- Publication and retention are operator decisions until an explicit job state machine is implemented.
+- Component jobs make partial state explicit. A failed or missing required component blocks publication.
+- Publication atomically advances the current pointer; already-published snapshots are immutable through import APIs.
+- Retention remains an operator decision until safe pruning procedures are implemented.

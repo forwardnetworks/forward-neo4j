@@ -24,8 +24,9 @@ final class SnapshotImporter {
         List<DeviceData> devices,
         List<TopologyLinkData> topology
     ) {
+        assertSnapshotMutable(networkId, snapshot.id());
         mergeNetworkAndSnapshot(networkId, snapshot);
-        devices.forEach(device -> mergeDevice(networkId, snapshot.id(), device));
+        mergeDevices(networkId, snapshot.id(), devices);
 
         List<String> deviceNames = devices.stream().map(DeviceData::name).sorted(Comparator.comparingInt(String::length).reversed()).toList();
         Set<LinkKey> uniqueLinks = new HashSet<>();
@@ -39,10 +40,29 @@ final class SnapshotImporter {
             }
             LinkKey key = LinkKey.canonical(source, target);
             if (uniqueLinks.add(key)) {
-                mergeLink(networkId, snapshot.id(), key);
+                // Imported in one set-oriented statement after validation and de-duplication.
             }
         }
-        return new ImportStats(devices.size(), uniqueLinks.size(), skippedLinks);
+        mergeLinks(networkId, snapshot.id(), uniqueLinks);
+        var stats = new ImportStats(devices.size(), uniqueLinks.size(), skippedLinks);
+        mergeInventoryJob(networkId, snapshot.id(), stats);
+        return stats;
+    }
+
+    private void assertSnapshotMutable(String networkId, String snapshotId) {
+        try (var rows = transaction.execute(
+            """
+            MATCH (snapshot:ForwardSnapshot {networkId: $networkId, id: $snapshotId})
+            RETURN snapshot.publicationState AS publicationState
+            """,
+            Map.of("networkId", networkId, "snapshotId", snapshotId)
+        )) {
+            if (rows.hasNext() && "PUBLISHED".equals(rows.next().get("publicationState"))) {
+                throw new IllegalStateException(
+                    "Snapshot " + snapshotId + " is already published and is immutable; import a new snapshot instead"
+                );
+            }
+        }
     }
 
     private void mergeNetworkAndSnapshot(String networkId, SnapshotData snapshot) {
@@ -52,9 +72,11 @@ final class SnapshotImporter {
             MERGE (snapshot:ForwardSnapshot {networkId: $networkId, id: $snapshotId})
             SET snapshot.createdAt = $createdAt,
                 snapshot.processedAt = $processedAt,
-                snapshot.importedAt = datetime()
+                snapshot.importedAt = datetime(),
+                snapshot.publicationState = coalesce(snapshot.publicationState, 'STAGED'),
+                snapshot.validationState = 'PENDING'
             MERGE (network)-[:HAS_SNAPSHOT]->(snapshot)
-            SET network.currentSnapshotId = $snapshotId
+            SET network.candidateSnapshotId = $snapshotId
             """,
             properties(
                 "networkId",
@@ -69,73 +91,102 @@ final class SnapshotImporter {
         );
     }
 
-    private void mergeDevice(String networkId, String snapshotId, DeviceData device) {
+    private void mergeInventoryJob(String networkId, String snapshotId, ImportStats stats) {
         transaction.execute(
             """
             MATCH (snapshot:ForwardSnapshot {networkId: $networkId, id: $snapshotId})
-            MERGE (device:ForwardDevice {networkId: $networkId, snapshotId: $snapshotId, id: $name})
-            SET device.displayName = $displayName,
-                device.type = $type,
-                device.vendor = $vendor,
-                device.model = $model,
-                device.platform = $platform,
-                device.osVersion = $osVersion,
-                device.locationId = $locationId,
-                device.managementIps = $managementIps,
-                device.tags = $tags
+            MERGE (job:ForwardImportJob {
+              networkId: $networkId,
+              snapshotId: $snapshotId,
+              component: 'inventory'
+            })
+            ON CREATE SET job.createdAt = datetime(), job.attempt = 0
+            SET job.state = 'VALIDATED',
+                job.description = 'Device inventory and physical topology',
+                job.attempt = coalesce(job.attempt, 0) + 1,
+                job.submittedAt = datetime(),
+                job.startedAt = datetime(),
+                job.completedAt = datetime(),
+                job.failedAt = null,
+                job.error = null,
+                job.rowsImported = $rowsImported,
+                job.expectedRows = $rowsImported,
+                job.deviceCount = $devices,
+                job.linkCount = $links,
+                job.skippedLinkCount = $skippedLinks
+            MERGE (snapshot)-[:HAS_IMPORT_JOB]->(job)
+            """,
+            Map.of(
+                "networkId", networkId,
+                "snapshotId", snapshotId,
+                "rowsImported", stats.devices() + stats.links(),
+                "devices", stats.devices(),
+                "links", stats.links(),
+                "skippedLinks", stats.skippedLinks()
+            )
+        );
+    }
+
+    private void mergeDevices(String networkId, String snapshotId, List<DeviceData> devices) {
+        List<Map<String, Object>> rows = devices.stream().map(device -> properties(
+            "name", device.name(),
+            "displayName", device.displayName(),
+            "type", device.type(),
+            "vendor", device.vendor(),
+            "model", device.model(),
+            "platform", device.platform(),
+            "osVersion", device.osVersion(),
+            "locationId", device.locationId(),
+            "managementIps", device.managementIps(),
+            "tags", device.tags()
+        )).toList();
+        transaction.execute(
+            """
+            MATCH (snapshot:ForwardSnapshot {networkId: $networkId, id: $snapshotId})
+            UNWIND $devices AS item
+            MERGE (device:ForwardDevice {networkId: $networkId, snapshotId: $snapshotId, id: item.name})
+            SET device.displayName = item.displayName,
+                device.type = item.type,
+                device.vendor = item.vendor,
+                device.model = item.model,
+                device.platform = item.platform,
+                device.osVersion = item.osVersion,
+                device.locationId = item.locationId,
+                device.managementIps = item.managementIps,
+                device.tags = item.tags
             MERGE (snapshot)-[:CONTAINS]->(device)
             """,
-            properties(
-                "networkId", networkId,
-                "snapshotId", snapshotId,
-                "name", device.name(),
-                "displayName", device.displayName(),
-                "type", device.type(),
-                "vendor", device.vendor(),
-                "model", device.model(),
-                "platform", device.platform(),
-                "osVersion", device.osVersion(),
-                "locationId", device.locationId(),
-                "managementIps", device.managementIps(),
-                "tags", device.tags()
-            )
+            Map.of("networkId", networkId, "snapshotId", snapshotId, "devices", rows)
         );
     }
 
-    private void mergeLink(String networkId, String snapshotId, LinkKey link) {
-        mergeInterface(networkId, snapshotId, link.source());
-        mergeInterface(networkId, snapshotId, link.target());
+    private void mergeLinks(String networkId, String snapshotId, Set<LinkKey> links) {
+        List<Map<String, Object>> rows = links.stream().map(link -> Map.<String, Object>of(
+            "sourceId", link.source().raw(),
+            "sourceDevice", link.source().deviceName(),
+            "sourceInterface", link.source().interfaceName(),
+            "targetId", link.target().raw(),
+            "targetDevice", link.target().deviceName(),
+            "targetInterface", link.target().interfaceName()
+        )).toList();
         transaction.execute(
             """
-            MATCH (source:ForwardInterface {networkId: $networkId, snapshotId: $snapshotId, id: $sourceId})
-            MATCH (target:ForwardInterface {networkId: $networkId, snapshotId: $snapshotId, id: $targetId})
+            UNWIND $links AS item
+            MATCH (sourceDevice:ForwardDevice {
+              networkId: $networkId, snapshotId: $snapshotId, id: item.sourceDevice
+            })
+            MATCH (targetDevice:ForwardDevice {
+              networkId: $networkId, snapshotId: $snapshotId, id: item.targetDevice
+            })
+            MERGE (source:ForwardInterface {networkId: $networkId, snapshotId: $snapshotId, id: item.sourceId})
+            SET source.name = item.sourceInterface, source.deviceName = item.sourceDevice
+            MERGE (target:ForwardInterface {networkId: $networkId, snapshotId: $snapshotId, id: item.targetId})
+            SET target.name = item.targetInterface, target.deviceName = item.targetDevice
+            MERGE (sourceDevice)-[:HAS_INTERFACE]->(source)
+            MERGE (targetDevice)-[:HAS_INTERFACE]->(target)
             MERGE (source)-[:CONNECTED_TO]->(target)
             """,
-            Map.of(
-                "networkId", networkId,
-                "snapshotId", snapshotId,
-                "sourceId", link.source().raw(),
-                "targetId", link.target().raw()
-            )
-        );
-    }
-
-    private void mergeInterface(String networkId, String snapshotId, PortRef port) {
-        transaction.execute(
-            """
-            MATCH (device:ForwardDevice {networkId: $networkId, snapshotId: $snapshotId, id: $deviceName})
-            MERGE (interface:ForwardInterface {networkId: $networkId, snapshotId: $snapshotId, id: $id})
-            SET interface.name = $interfaceName,
-                interface.deviceName = $deviceName
-            MERGE (device)-[:HAS_INTERFACE]->(interface)
-            """,
-            Map.of(
-                "networkId", networkId,
-                "snapshotId", snapshotId,
-                "deviceName", port.deviceName(),
-                "interfaceName", port.interfaceName(),
-                "id", port.raw()
-            )
+            Map.of("networkId", networkId, "snapshotId", snapshotId, "links", rows)
         );
     }
 

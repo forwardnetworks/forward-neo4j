@@ -1,9 +1,21 @@
 {
   "applications": [
     {
+      "id": "sample-checkout",
       "name": "Sample Checkout",
       "criticality": "CRITICAL",
-      "owner": "Demo Engineering"
+      "owner": "Demo Engineering",
+      "description": "Synthetic business service used for graph correlation examples.",
+      "deviceNames": ["app-a", "db-a"],
+      "flows": [
+        {
+          "name": "sample-checkout-to-database",
+          "srcIp": "198.51.100.10",
+          "dstIp": "203.0.113.20",
+          "ipProto": 6,
+          "dstPort": "5432"
+        }
+      ]
     }
   ]
 }

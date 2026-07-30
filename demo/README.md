@@ -4,9 +4,9 @@ This directory contains two separate workflows:
 
 1. `synthetic-data.cypher` creates a small graph using invented device names, documentation IP ranges, and no Forward
    credentials. It is safe for demos, screenshots, and query development.
-2. The four `import-*.cypher` scripts execute bundled NQEs against a configured Forward instance and import real results.
+2. The four NQE `import-*.cypher` scripts execute bundled queries against a configured Forward instance and import real results.
    Never use that graph for public screenshots or commit its output.
-3. `import-checks.cypher`, `import-vulnerabilities.cypher`, and `import-paths.cypher` use specialized Forward APIs.
+3. Checks, vulnerabilities, selected details, and paths use specialized Forward APIs.
    Availability follows `FORWARD_LICENSE_TIER`; see [the feature matrix](../docs/LICENSE_PROFILES.md).
 
 ## Run the synthetic graph
@@ -35,9 +35,12 @@ WHERE device.networkId = "demo-network" AND device.snapshotId = "demo-snapshot"
 RETURN path;
 ```
 
-The accompanying `business-context.json` and `application-flows.yaml` are synthetic inputs for future correlation and
-Bulk Path Search examples. The path procedure takes a Cypher list of flow maps so callers choose exactly which
-application questions to evaluate.
+The accompanying `business-context.json` and `application-flows.yaml` are synthetic inputs for implemented application
+and Bulk Path Search correlation. `import-business-context.cypher` accepts an `applications` list; the path procedure
+accepts a curated list of flow maps so callers choose exactly which application questions to evaluate.
+
+For a live local import, use `run-import.sh` and the [customer demo runbook](../docs/CUSTOMER_DEMO.md). The wrapper records
+component states, validates structure, and publishes only with an explicit `--publish` flag.
 
 ## Container build
 
