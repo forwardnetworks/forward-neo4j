@@ -1,13 +1,15 @@
 # Architecture
 
-The integration is a self-managed Neo4j plugin. Neo4j procedures call supported, read-only Forward data APIs and map
-their responses to a temporal property graph. Forward remains the source of truth; Neo4j is a derived analytical view.
+The integration has two deployment adapters: a self-managed Neo4j plugin and a client-side connector for AuraDB or
+remote managed Neo4j. Both call supported, read-only Forward data APIs and map their responses to the same temporal
+property graph. Forward remains the source of truth; Neo4j is a derived analytical view.
 
 ```mermaid
 flowchart LR
-    F[Forward Networks] -->|Snapshots, Devices, Topology| P[Neo4j plugin]
+    F[Forward Networks] -->|Snapshots, streamed Devices and Topology| P[Self-managed plugin]
     F -->|Async NQE execution and paged results| P
-    P -->|MERGE base inventory| G[(Snapshot-scoped graph)]
+    F -->|Same supported APIs| X[External connector]
+    X -->|Encrypted Neo4j driver batches| G[(Snapshot-scoped graph)]
     P -->|Stream rows| C[Batched Cypher importers]
     C --> G
     B[Operator business context] --> G
@@ -74,10 +76,13 @@ a permanent physical edge, and a failed check is not a topology relationship.
 
 ## Failure semantics
 
-- Snapshot inventory/topology writes currently share one Neo4j transaction.
+- Snapshot inventory/topology HTTP arrays are incrementally parsed and written in bounded transactions.
 - Each NQE submission is at-most-once from the caller's perspective because POST is not retried.
 - Result reads are lazy and GET retries are bounded.
 - Batched imports may be partially committed. Stable identities make a rerun idempotent.
 - Component jobs make partial state explicit. A failed or missing required component blocks publication.
 - Publication atomically advances the current pointer; already-published snapshots are immutable through import APIs.
-- Retention remains an operator decision until safe pruning procedures are implemented.
+- Retention preview protects current, previous, candidate, and requested history. Deletion requires exact snapshot IDs
+  and is limited to integration-owned snapshot labels.
+- Scheduled execution remains outside Neo4j under a one-shot service and file lock; no plugin background thread owns
+  tenant credentials or import state.

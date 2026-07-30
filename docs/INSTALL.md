@@ -53,7 +53,7 @@ The installer refuses broad target paths, verifies the downloaded release SHA-25
 point, and writes only the versioned archive under the selected `NEO4J_HOME/web` directory. Future package upgrades
 should be rechecked because an updated Arch recipe may begin shipping the upstream web archive directly.
 
-Build from source, or download `forward-neo4j-plugin-0.2.1.jar` from the GitHub release:
+Build from source, or download `forward-neo4j-plugin-0.3.0.jar` from the GitHub release:
 
 ```bash
 ./gradlew clean test jar
@@ -64,7 +64,7 @@ Install the plugin and user service:
 ```bash
 install -d -m 0700 ~/.local/state/forward-neo4j/plugins ~/.config/forward-neo4j
 install -d ~/.config/systemd/user
-deploy/install-plugin.sh build/libs/forward-neo4j-plugin-0.2.1.jar \
+deploy/install-plugin.sh build/libs/forward-neo4j-plugin-0.3.0.jar \
   ~/.local/state/forward-neo4j
 install -m 0644 deploy/neo4j.conf ~/.config/forward-neo4j/neo4j.conf
 install -m 0644 deploy/forward-neo4j.service ~/.config/systemd/user/forward-neo4j.service
@@ -119,6 +119,9 @@ Environment variables are also supported. Explicit environment values take prece
 | `FORWARD_NQE_POLL_SECONDS` | Async execution poll interval, minimum 5 | `5` |
 | `FORWARD_NQE_TIMEOUT_SECONDS` | Total async execution wait | `1800` |
 | `FORWARD_NQE_PAGE_SIZE` | Materialized result page size, maximum 10,000 | `5000` |
+
+For AuraDB or another database where plugins cannot be installed, use the separate
+[external connector](AURA.md).
 
 ## First start
 
@@ -268,3 +271,42 @@ all four bundled NQEs, uses an atomic rename, and retains the previous plugin as
 `forward-neo4j-plugin.jar.previous`. The non-`.jar` suffix prevents Neo4j from loading the rollback copy alongside the
 active plugin. Keep that rollback copy until `verify-install.sh --forward` and a representative query succeed. A plugin
 rollback does not automatically revert graph schema or imported data.
+
+## Optional scheduled imports and metrics
+
+Run at least one staged import manually before installing the timer. The timer is not enabled by the installer or by
+repository defaults.
+
+```bash
+install -d -m 0700 ~/.config/forward-neo4j ~/.config/systemd/user
+install -m 0600 deploy/scheduler.env.example ~/.config/forward-neo4j/scheduler.env
+install -m 0644 deploy/forward-neo4j-import.service deploy/forward-neo4j-import.timer \
+  ~/.config/systemd/user/
+```
+
+Edit `scheduler.env`: set the network, actual license tier, Neo4j URI, and a private `NEO4J_PASSWORD_FILE`. The
+`WorkingDirectory` and `ExecStart` paths assume the repository is installed at
+`~/.local/share/forward-neo4j`; adjust the unit if a different immutable checkout is used.
+
+Test the exact one-shot service before enabling its timer:
+
+```bash
+systemctl --user daemon-reload
+systemctl --user start forward-neo4j-import.service
+systemctl --user status forward-neo4j-import.service
+systemctl --user enable --now forward-neo4j-import.timer
+systemctl --user list-timers forward-neo4j-import.timer
+```
+
+`deploy/run-scheduled-import.sh` takes a non-blocking file lock, imports the latest processed snapshot, validates and
+publishes it, then atomically writes a Prometheus textfile. A concurrent timer run exits without starting a second
+import. The default metrics path is
+`~/.local/state/forward-neo4j/metrics/forward-neo4j.prom`; network IDs are metric labels, so protect that file as
+environment-sensitive data.
+
+To export metrics without importing:
+
+```bash
+NEO4J_PASSWORD_FILE="$HOME/.config/forward-neo4j/browser-password" \
+  FORWARD_NETWORK_ID=NETWORK_ID deploy/export-metrics.sh
+```

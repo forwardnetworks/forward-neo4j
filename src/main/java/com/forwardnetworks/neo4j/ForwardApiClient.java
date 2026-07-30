@@ -1,10 +1,13 @@
 package com.forwardnetworks.neo4j;
 
+import com.fasterxml.jackson.core.JsonParser;
+import com.fasterxml.jackson.core.JsonToken;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.URI;
 import java.net.URLEncoder;
 import java.net.http.HttpClient;
@@ -26,6 +29,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.Set;
+import java.util.function.Function;
+import java.util.stream.Stream;
+import java.util.stream.StreamSupport;
 
 final class ForwardApiClient {
 
@@ -148,6 +154,19 @@ final class ForwardApiClient {
         return List.copyOf(devices);
     }
 
+    Stream<DeviceData> streamDevices(String networkId, String snapshotId, Runnable cancellationCheck) {
+        return streamArray(
+            "/api/networks/" +
+            segment(networkId) +
+            "/devices?snapshotId=" +
+            query(snapshotId) +
+            "&with=tags&with=locationId",
+            "Devices API",
+            cancellationCheck,
+            ForwardApiClient::deviceData
+        );
+    }
+
     List<TopologyLinkData> getTopology(String snapshotId) {
         JsonNode response = get("/api/snapshots/" + segment(snapshotId) + "/topology");
         if (!response.isArray()) {
@@ -160,6 +179,15 @@ final class ForwardApiClient {
             )
         );
         return List.copyOf(links);
+    }
+
+    Stream<TopologyLinkData> streamTopology(String snapshotId, Runnable cancellationCheck) {
+        return streamArray(
+            "/api/snapshots/" + segment(snapshotId) + "/topology",
+            "Topology API",
+            cancellationCheck,
+            node -> new TopologyLinkData(requiredText(node, "sourcePort"), requiredText(node, "targetPort"))
+        );
     }
 
     List<Map<String, Object>> getChecks(String snapshotId) {
@@ -385,6 +413,75 @@ final class ForwardApiClient {
         return request("GET", pathAndQuery, null, true);
     }
 
+    private <T> Stream<T> streamArray(
+        String pathAndQuery,
+        String source,
+        Runnable cancellationCheck,
+        Function<JsonNode, T> mapper
+    ) {
+        InputStream body = getStream(pathAndQuery);
+        StreamingArrayIterator<T> iterator;
+        try {
+            iterator = new StreamingArrayIterator<>(body, source, cancellationCheck, mapper);
+        } catch (RuntimeException e) {
+            try {
+                body.close();
+            } catch (IOException closeFailure) {
+                e.addSuppressed(closeFailure);
+            }
+            throw e;
+        }
+        return StreamSupport.stream(
+            java.util.Spliterators.spliteratorUnknownSize(
+                iterator,
+                java.util.Spliterator.ORDERED | java.util.Spliterator.NONNULL
+            ),
+            false
+        ).onClose(iterator::close);
+    }
+
+    private InputStream getStream(String pathAndQuery) {
+        URI uri = config.baseUri().resolve(pathAndQuery);
+        IOException lastIoFailure = null;
+        for (int attempt = 1; attempt <= MAX_GET_ATTEMPTS; attempt++) {
+            HttpRequest request = HttpRequest.newBuilder(uri)
+                .timeout(config.timeout())
+                .header("Accept", "application/json")
+                .header("Authorization", authorization)
+                .GET()
+                .build();
+            try {
+                HttpResponse<InputStream> response = httpClient.send(
+                    request,
+                    HttpResponse.BodyHandlers.ofInputStream()
+                );
+                if (response.statusCode() >= 200 && response.statusCode() < 300) {
+                    return response.body();
+                }
+                try (InputStream ignored = response.body()) {
+                    // Closing the response body permits connection reuse without exposing error contents.
+                }
+                if (attempt < MAX_GET_ATTEMPTS && isTransient(response.statusCode())) {
+                    sleep(Duration.ofMillis(250L << (attempt - 1)));
+                    continue;
+                }
+                throw new ForwardApiException(
+                    "Forward GET " + uri.getPath() + " returned HTTP " + response.statusCode()
+                );
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new ForwardApiException("Forward GET was interrupted", e);
+            } catch (IOException e) {
+                lastIoFailure = e;
+                if (attempt < MAX_GET_ATTEMPTS) {
+                    sleep(Duration.ofMillis(250L << (attempt - 1)));
+                    continue;
+                }
+            }
+        }
+        throw new ForwardApiException("Forward GET failed: " + lastIoFailure.getMessage(), lastIoFailure);
+    }
+
     private JsonNode post(String pathAndQuery, JsonNode body) {
         return request("POST", pathAndQuery, body, false);
     }
@@ -477,6 +574,21 @@ final class ForwardApiClient {
         return List.copyOf(values);
     }
 
+    private static DeviceData deviceData(JsonNode node) {
+        return new DeviceData(
+            requiredText(node, "name"),
+            optionalText(node, "displayName"),
+            optionalText(node, "type"),
+            optionalText(node, "vendor"),
+            optionalText(node, "model"),
+            optionalText(node, "platform"),
+            optionalText(node, "osVersion"),
+            optionalText(node, "locationId"),
+            textList(node.path("managementIps")),
+            textList(node.path("tags"))
+        );
+    }
+
     private static List<Map<String, Object>> objectRows(JsonNode node, String source) {
         if (!node.isArray()) {
             throw new ForwardApiException(source + " returned a non-array response");
@@ -547,6 +659,96 @@ final class ForwardApiClient {
     ) {}
 
     private record NqePage(List<Map<String, Object>> rows, long totalItems) {}
+
+    private static final class StreamingArrayIterator<T> implements Iterator<T>, AutoCloseable {
+
+        private final JsonParser parser;
+        private final String source;
+        private final Runnable cancellationCheck;
+        private final Function<JsonNode, T> mapper;
+        private T next;
+        private boolean nextReady;
+        private boolean closed;
+
+        private StreamingArrayIterator(
+            InputStream body,
+            String source,
+            Runnable cancellationCheck,
+            Function<JsonNode, T> mapper
+        ) {
+            this.source = source;
+            this.cancellationCheck = cancellationCheck;
+            this.mapper = mapper;
+            try {
+                parser = OBJECT_MAPPER.getFactory().createParser(body);
+                if (parser.nextToken() != JsonToken.START_ARRAY) {
+                    close();
+                    throw new ForwardApiException(source + " returned a non-array response");
+                }
+            } catch (IOException e) {
+                throw new ForwardApiException("Unable to parse " + source + " response", e);
+            }
+        }
+
+        @Override
+        public boolean hasNext() {
+            if (nextReady) {
+                return true;
+            }
+            if (closed) {
+                return false;
+            }
+            cancellationCheck.run();
+            try {
+                JsonToken token = parser.nextToken();
+                if (token == JsonToken.END_ARRAY) {
+                    close();
+                    return false;
+                }
+                if (token == null) {
+                    close();
+                    throw new ForwardApiException(source + " response ended before the array was complete");
+                }
+                if (token != JsonToken.START_OBJECT) {
+                    close();
+                    throw new ForwardApiException(source + " contained a non-object item");
+                }
+                next = mapper.apply(OBJECT_MAPPER.readTree(parser));
+                nextReady = true;
+                return true;
+            } catch (IOException e) {
+                close();
+                throw new ForwardApiException("Unable to stream " + source + " response", e);
+            } catch (RuntimeException e) {
+                close();
+                throw e;
+            }
+        }
+
+        @Override
+        public T next() {
+            if (!hasNext()) {
+                throw new NoSuchElementException();
+            }
+            T value = next;
+            next = null;
+            nextReady = false;
+            return value;
+        }
+
+        @Override
+        public void close() {
+            if (closed) {
+                return;
+            }
+            closed = true;
+            try {
+                parser.close();
+            } catch (IOException e) {
+                throw new ForwardApiException("Unable to close " + source + " response", e);
+            }
+        }
+    }
 
     private static final class NqeResultIterator implements Iterator<Map<String, Object>> {
 

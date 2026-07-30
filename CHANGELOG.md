@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.3.0 - 2026-07-30
+
+- Incrementally parse Devices and Topology API arrays and write base inventory in bounded, restartable Cypher batches.
+- Add fail-closed inventory staging/completion and no-op scheduled runs when the newest processed snapshot is already
+  published.
+- Add snapshot retention preview plus explicit pruning that protects current, previous, and candidate pointers and
+  deletes only integration-owned snapshot labels.
+- Add durable Prometheus metrics, atomic textfile export, password-file support, and an opt-in, overlap-safe systemd
+  timer.
+- Add a separately packaged AuraDB/remote Neo4j connector with encrypted-driver enforcement, streamed inventory, all
+  license-enabled async NQEs, Check/vulnerability summaries, structural validation, and explicit publication.
+- Release and attest plugin and connector artifacts with separate CycloneDX SBOMs.
+- Upgrade Gradle to 9.6.1, Jackson to 2.22.1, JUnit to 6.1.2, and the pinned Gradle container builder to 9.6.1.
+
 ## 0.2.2 - 2026-07-30
 
 - Store plugin rollback copies with a non-`.jar` suffix so Neo4j cannot load the previous and active versions together.

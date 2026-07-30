@@ -49,8 +49,21 @@ case "$tier" in
     ;;
 esac
 
+if [[ -z ${NEO4J_PASSWORD:-} && -n ${NEO4J_PASSWORD_FILE:-} ]]; then
+  [[ -f ${NEO4J_PASSWORD_FILE} ]] || {
+    echo "NEO4J_PASSWORD_FILE is not a regular file" >&2
+    exit 2
+  }
+  password_mode=$(stat -c '%a' "${NEO4J_PASSWORD_FILE}")
+  if (( (8#${password_mode} & 077) != 0 )); then
+    echo "NEO4J_PASSWORD_FILE must not grant group or other permissions" >&2
+    exit 2
+  fi
+  IFS= read -r NEO4J_PASSWORD < "${NEO4J_PASSWORD_FILE}" || true
+  export NEO4J_PASSWORD
+fi
 if [[ -z ${NEO4J_PASSWORD:-} ]]; then
-  echo "NEO4J_PASSWORD must be set in the environment" >&2
+  echo "Set NEO4J_PASSWORD or NEO4J_PASSWORD_FILE" >&2
   exit 2
 fi
 
@@ -84,20 +97,67 @@ fi
 "${cypher[@]}" 'CALL forward.schema.install() YIELD constraintsInstalled RETURN constraintsInstalled'
 
 inventory_output=$("${cypher[@]}" -P "$base_params" \
-  'CALL forward.import.snapshot($networkId, $snapshotId)
-   YIELD networkId, snapshotId
-   RETURN "IMPORT_IDS=" + networkId + "|" + snapshotId AS marker')
+  'CALL forward.inventory.begin($networkId, $snapshotId)
+   YIELD networkId, snapshotId, alreadyPublished
+   RETURN "IMPORT_IDS=" + networkId + "|" + snapshotId + "|" + toString(alreadyPublished) AS marker')
 printf '%s\n' "$inventory_output"
 resolved=$(printf '%s\n' "$inventory_output" \
   | awk '/IMPORT_IDS=/ {value=$0; sub(/^"?IMPORT_IDS=/, "", value); sub(/".*$/, "", value); print value}' \
   | tail -n 1)
 network_id=${resolved%%|*}
-snapshot_id=${resolved#*|}
+resolved_remainder=${resolved#*|}
+snapshot_id=${resolved_remainder%%|*}
+already_published=${resolved_remainder#*|}
 if [[ -z $network_id || -z $snapshot_id || $network_id == "$snapshot_id" ]]; then
   echo "Could not resolve imported network and snapshot IDs" >&2
   exit 1
 fi
+if [[ $already_published == true ]]; then
+  echo "Snapshot $snapshot_id is already the published current snapshot; no import is needed."
+  exit 0
+fi
 base_params="{networkId: \"$network_id\", snapshotId: \"$snapshot_id\"}"
+
+fail_inventory() {
+  local error=$1
+  "${cypher[@]}" -P "$base_params" -P "{error: \"$error\"}" \
+    'CALL forward.import.fail("inventory", $networkId, $snapshotId, $error)' >/dev/null || true
+}
+
+if ! device_output=$("${cypher[@]}" -P "$base_params" --file "$repo_dir/demo/import-inventory-devices.cypher"); then
+  fail_inventory "streamed device importer failed"
+  exit 1
+fi
+printf '%s\n' "$device_output"
+device_count=$(printf '%s\n' "$device_output" \
+  | awk '/INVENTORY_DEVICES=/ {value=$0; sub(/^.*INVENTORY_DEVICES=/, "", value); sub(/[^0-9].*$/, "", value); print value}' \
+  | tail -n 1)
+if [[ -z $device_count || $device_count == 0 ]]; then
+  fail_inventory "streamed device import produced zero rows"
+  echo "Streamed inventory returned no devices; snapshot will not be validated" >&2
+  exit 1
+fi
+
+if ! topology_output=$("${cypher[@]}" -P "$base_params" --file "$repo_dir/demo/import-inventory-topology.cypher"); then
+  fail_inventory "streamed topology importer failed"
+  exit 1
+fi
+printf '%s\n' "$topology_output"
+topology_counts=$(printf '%s\n' "$topology_output" \
+  | awk '/INVENTORY_TOPOLOGY=/ {value=$0; sub(/^.*INVENTORY_TOPOLOGY=/, "", value); sub(/[^0-9|].*$/, "", value); print value}' \
+  | tail -n 1)
+if [[ -z $topology_counts || $topology_counts != *"|"* ]]; then
+  fail_inventory "streamed topology import did not return counts"
+  echo "Could not resolve streamed topology counts" >&2
+  exit 1
+fi
+skipped_links=${topology_counts#*|}
+if ! "${cypher[@]}" -P "$base_params" -P "{skippedLinks: $skipped_links}" \
+  'CALL forward.inventory.complete($networkId, $snapshotId, $skippedLinks)
+   YIELD devices, links, skippedLinks RETURN devices, links, skippedLinks'; then
+  fail_inventory "streamed inventory validation failed"
+  exit 1
+fi
 
 components=()
 

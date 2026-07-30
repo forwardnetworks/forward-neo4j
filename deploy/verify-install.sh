@@ -11,8 +11,21 @@ case "${1:-}" in
     ;;
 esac
 
+if [[ -z ${NEO4J_PASSWORD:-} && -n ${NEO4J_PASSWORD_FILE:-} ]]; then
+  [[ -f ${NEO4J_PASSWORD_FILE} ]] || {
+    echo "NEO4J_PASSWORD_FILE is not a regular file" >&2
+    exit 2
+  }
+  password_mode=$(stat -c '%a' "${NEO4J_PASSWORD_FILE}")
+  if (( (8#${password_mode} & 077) != 0 )); then
+    echo "NEO4J_PASSWORD_FILE must not grant group or other permissions" >&2
+    exit 2
+  fi
+  IFS= read -r NEO4J_PASSWORD < "${NEO4J_PASSWORD_FILE}" || true
+  export NEO4J_PASSWORD
+fi
 if [[ -z ${NEO4J_PASSWORD:-} ]]; then
-  echo "NEO4J_PASSWORD must be set in the environment" >&2
+  echo "Set NEO4J_PASSWORD or NEO4J_PASSWORD_FILE" >&2
   exit 2
 fi
 

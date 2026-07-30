@@ -49,6 +49,71 @@ final class SnapshotImporter {
         return stats;
     }
 
+    void beginInventory(String networkId, SnapshotData snapshot) {
+        assertSnapshotMutable(networkId, snapshot.id());
+        mergeNetworkAndSnapshot(networkId, snapshot);
+        new ImportJobManager(transaction).begin(networkId, snapshot.id(), ImportComponent.INVENTORY);
+    }
+
+    boolean isCurrentPublished(String networkId, String snapshotId) {
+        try (var rows = transaction.execute(
+            """
+            MATCH (network:ForwardNetwork {id: $networkId})
+            MATCH (snapshot:ForwardSnapshot {networkId: $networkId, id: $snapshotId})
+            RETURN network.currentSnapshotId = snapshot.id AND snapshot.publicationState = 'PUBLISHED' AS current
+            """,
+            Map.of("networkId", networkId, "snapshotId", snapshotId)
+        )) {
+            return rows.hasNext() && Boolean.TRUE.equals(rows.next().get("current"));
+        }
+    }
+
+    ImportStats completeInventory(String networkId, String snapshotId, long skippedLinks) {
+        if (skippedLinks < 0) {
+            throw new IllegalArgumentException("skippedLinks must not be negative");
+        }
+        long devices;
+        long links;
+        try (var rows = transaction.execute(
+            """
+            MATCH (snapshot:ForwardSnapshot {networkId: $networkId, id: $snapshotId})
+            OPTIONAL MATCH (snapshot)-[:CONTAINS]->(device:ForwardDevice)
+            WITH snapshot, count(DISTINCT device) AS devices
+            OPTIONAL MATCH (:ForwardInterface {networkId: $networkId, snapshotId: $snapshotId})
+              -[link:CONNECTED_TO]->
+              (:ForwardInterface {networkId: $networkId, snapshotId: $snapshotId})
+            RETURN devices, count(DISTINCT link) AS links
+            """,
+            Map.of("networkId", networkId, "snapshotId", snapshotId)
+        )) {
+            if (!rows.hasNext()) {
+                throw new IllegalStateException("Snapshot " + snapshotId + " is not staged for network " + networkId);
+            }
+            var row = rows.next();
+            devices = ((Number) row.get("devices")).longValue();
+            links = ((Number) row.get("links")).longValue();
+        }
+        if (devices == 0) {
+            throw new IllegalStateException("Inventory import produced zero devices; refusing to validate the snapshot");
+        }
+        var stats = new ImportStats(devices, links, skippedLinks);
+        mergeInventoryJob(networkId, snapshotId, stats);
+        return stats;
+    }
+
+    List<String> deviceNames(String networkId, String snapshotId) {
+        try (var rows = transaction.execute(
+            """
+            MATCH (:ForwardSnapshot {networkId: $networkId, id: $snapshotId})-[:CONTAINS]->(device:ForwardDevice)
+            RETURN device.id AS id
+            ORDER BY size(device.id) DESC, device.id
+            """,
+            Map.of("networkId", networkId, "snapshotId", snapshotId)
+        )) {
+            return rows.stream().map(row -> (String) row.get("id")).toList();
+        }
+    }
+
     private void assertSnapshotMutable(String networkId, String snapshotId) {
         try (var rows = transaction.execute(
             """
@@ -190,7 +255,7 @@ final class SnapshotImporter {
         );
     }
 
-    private static PortRef parsePort(String raw, List<String> deviceNames) {
+    static PortRef parsePort(String raw, List<String> deviceNames) {
         for (String deviceName : deviceNames) {
             String prefix = deviceName + ' ';
             if (raw.startsWith(prefix) && raw.length() > prefix.length()) {
@@ -210,9 +275,9 @@ final class SnapshotImporter {
 
     record ImportStats(long devices, long links, long skippedLinks) {}
 
-    private record PortRef(String raw, String deviceName, String interfaceName) {}
+    record PortRef(String raw, String deviceName, String interfaceName) {}
 
-    private record LinkKey(PortRef source, PortRef target) {
+    record LinkKey(PortRef source, PortRef target) {
         static LinkKey canonical(PortRef left, PortRef right) {
             return left.raw().compareTo(right.raw()) <= 0 ? new LinkKey(left, right) : new LinkKey(right, left);
         }

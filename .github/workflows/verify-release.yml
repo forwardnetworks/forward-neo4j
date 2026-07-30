@@ -50,10 +50,21 @@ jobs:
           )
           artifact="${verification_dir}/forward-neo4j-plugin-${release_name#v}.jar"
           sbom="${verification_dir}/forward-neo4j-plugin-${release_name#v}.cdx.json"
+          connector_tar="${verification_dir}/forward-neo4j-connector-${release_name#v}.tar"
+          connector_zip="${verification_dir}/forward-neo4j-connector-${release_name#v}.zip"
+          connector_sbom="${verification_dir}/forward-neo4j-connector-${release_name#v}.cdx.json"
           test -f "${artifact}"
           test -s "${sbom}"
+          test -s "${connector_tar}"
+          test -s "${connector_zip}"
+          test -s "${connector_sbom}"
           gh attestation verify "${artifact}" --repo "${GITHUB_REPOSITORY}"
           gh attestation verify "${sbom}" --repo "${GITHUB_REPOSITORY}"
+          gh attestation verify "${connector_tar}" --repo "${GITHUB_REPOSITORY}"
+          gh attestation verify "${connector_zip}" --repo "${GITHUB_REPOSITORY}"
+          gh attestation verify "${connector_sbom}" --repo "${GITHUB_REPOSITORY}"
+          tar -tf "${connector_tar}" | grep -E '/bin/forward-neo4j-connector$'
+          unzip -Z1 "${connector_zip}" | grep -E '/bin/forward-neo4j-connector$'
           jar tf "${artifact}" | grep -Fx nqe/interfaces-v1.nqe
           jar tf "${artifact}" | grep -Fx nqe/interface-addresses-v1.nqe
           jar tf "${artifact}" | grep -Fx nqe/network-instances-v1.nqe
