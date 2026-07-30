@@ -103,4 +103,4 @@ jobs:
             --username neo4j \
             --password forward-ci-only-password \
             "CALL forward.plugin.info() YIELD version RETURN version = '${expected_version}' AS versionMatches" \
-            | grep -Fx true
+            | grep -Fx TRUE
