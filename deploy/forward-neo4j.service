@@ -1,0 +1,19 @@
+[Unit]
+Description=Local Neo4j with the Forward reference integration
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h
+Environment=NEO4J_HOME=%h/.local/state/forward-neo4j
+Environment=NEO4J_CONF=%h/.config/forward-neo4j
+Environment=FORWARD_CREDENTIAL_FILE=%h/.config/forward-neo4j/forward.credentials
+Environment=FORWARD_LICENSE_TIER=B
+ExecStart=/usr/bin/neo4j console
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=60
+
+[Install]
+WantedBy=default.target

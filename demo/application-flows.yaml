@@ -1,0 +1,6 @@
+flows:
+  - name: sample-checkout-to-database
+    srcIp: 192.0.2.10
+    dstIp: 198.51.100.20
+    ipProto: 6
+    dstPort: "5432"

@@ -1,0 +1,64 @@
+subinterfaceAddresses =
+  foreach device in network.devices
+  foreach interface in device.interfaces
+  foreach subinterface in interface.subinterfaces
+  foreach address in subinterface.ipv4.addresses + subinterface.ipv6.addresses
+  select {
+    deviceName: device.name,
+    interfaceName: interface.name,
+    subinterfaceName: subinterface.name,
+    sourceKind: "SUBINTERFACE",
+    networkInstanceName: subinterface.networkInstanceName,
+    ip: address.ip,
+    prefixLength: address.prefixLength
+  };
+
+routedVlanAddresses =
+  foreach device in network.devices
+  foreach interface in device.interfaces
+  where isPresent(interface.routedVlan)
+  let routedVlan = interface.routedVlan
+  foreach address in routedVlan.ipv4.addresses + routedVlan.ipv6.addresses
+  select {
+    deviceName: device.name,
+    interfaceName: interface.name,
+    subinterfaceName: "",
+    sourceKind: "ROUTED_VLAN",
+    networkInstanceName: routedVlan.networkInstanceName,
+    ip: address.ip,
+    prefixLength: address.prefixLength
+  };
+
+bridgeAddresses =
+  foreach device in network.devices
+  foreach interface in device.interfaces
+  where isPresent(interface.bridge)
+  let bridge = interface.bridge
+  foreach address in bridge.ipv4.addresses + bridge.ipv6.addresses
+  select {
+    deviceName: device.name,
+    interfaceName: interface.name,
+    subinterfaceName: "",
+    sourceKind: "BRIDGE",
+    networkInstanceName: bridge.networkInstanceName,
+    ip: address.ip,
+    prefixLength: address.prefixLength
+  };
+
+tunnelAddresses =
+  foreach device in network.devices
+  foreach interface in device.interfaces
+  where isPresent(interface.tunnel)
+  let tunnel = interface.tunnel
+  foreach address in tunnel.ipv4.addresses + tunnel.ipv6.addresses
+  select {
+    deviceName: device.name,
+    interfaceName: interface.name,
+    subinterfaceName: "",
+    sourceKind: "TUNNEL",
+    networkInstanceName: tunnel.networkInstanceName,
+    ip: address.ip,
+    prefixLength: address.prefixLength
+  };
+
+subinterfaceAddresses + routedVlanAddresses + bridgeAddresses + tunnelAddresses

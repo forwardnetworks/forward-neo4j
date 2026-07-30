@@ -1,0 +1,25 @@
+foreach device in network.devices
+foreach networkInstance in device.networkInstances
+foreach protocol in networkInstance.protocols
+where isPresent(protocol.bgp)
+let bgp = protocol.bgp
+foreach neighbor in bgp.neighbors
+select {
+  deviceName: device.name,
+  networkInstanceName: networkInstance.name,
+  localRouterId: bgp.routerId,
+  localAsNumber: bgp.asNumber,
+  neighborAddress: neighbor.neighborAddress,
+  peerDeviceName: neighbor.peerDeviceName,
+  peerVrf: neighbor.peerVrf,
+  peerRouterId: neighbor.peerRouterId,
+  sessionState: neighbor.sessionState,
+  enabled: neighbor.enabled,
+  description: neighbor.description,
+  peerAsNumber: neighbor.peerAS,
+  localAsOverride: neighbor.localAS,
+  peerType: neighbor.peerType,
+  sessionDurationSeconds: neighbor.statistics?.sessionDurationInSeconds,
+  advertisedPrefixes: neighbor.statistics?.advertisedPrefixes,
+  receivedPrefixes: neighbor.statistics?.receivedPrefixes
+}

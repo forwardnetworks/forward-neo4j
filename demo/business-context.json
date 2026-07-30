@@ -1,0 +1,9 @@
+{
+  "applications": [
+    {
+      "name": "Sample Checkout",
+      "criticality": "CRITICAL",
+      "owner": "Demo Engineering"
+    }
+  ]
+}

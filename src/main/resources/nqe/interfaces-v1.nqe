@@ -1,0 +1,15 @@
+foreach device in network.devices
+foreach interface in device.interfaces
+select {
+  deviceName: device.name,
+  interfaceName: interface.name,
+  interfaceType: interface.interfaceType,
+  layer: interface.layer,
+  mtu: interface.mtu,
+  loopbackMode: interface.loopbackMode,
+  description: interface.description,
+  adminStatus: interface.adminStatus,
+  operStatus: interface.operStatus,
+  speedMbps: interface.ethernet.speedMbps,
+  aggregateId: interface.ethernet.aggregateId
+}

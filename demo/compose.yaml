@@ -1,0 +1,22 @@
+services:
+  neo4j:
+    build:
+      context: ..
+      dockerfile: demo/Dockerfile
+    environment:
+      NEO4J_AUTH: neo4j/forward-demo
+      NEO4J_dbms_security_procedures_allowlist: forward.*
+      FORWARD_URL: ${FORWARD_URL:-}
+      FORWARD_TOKEN: ${FORWARD_TOKEN:-}
+      FORWARD_USERNAME: ${FORWARD_USERNAME:-}
+      FORWARD_PASSWORD: ${FORWARD_PASSWORD:-}
+      FORWARD_DEFAULT_NETWORK_ID: ${FORWARD_DEFAULT_NETWORK_ID:-}
+      FORWARD_LICENSE_TIER: ${FORWARD_LICENSE_TIER:-B}
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    volumes:
+      - neo4j-data:/data
+
+volumes:
+  neo4j-data:

@@ -1,0 +1,16 @@
+foreach device in network.devices
+foreach networkInstance in device.networkInstances
+select {
+  deviceName: device.name,
+  networkInstanceName: networkInstance.name,
+  instanceType: networkInstance.instanceType,
+  interfaceCount: length(networkInstance.interfaces),
+  vlanCount: length(networkInstance.vlans),
+  protocolCount: length(networkInstance.protocols),
+  ipv4RouteCount: if isPresent(networkInstance.afts.ipv4Unicast?.ipEntries)
+                  then length(networkInstance.afts.ipv4Unicast?.ipEntries)
+                  else 0,
+  ipv6RouteCount: if isPresent(networkInstance.afts.ipv6Unicast?.ipEntries)
+                  then length(networkInstance.afts.ipv6Unicast?.ipEntries)
+                  else 0
+}
