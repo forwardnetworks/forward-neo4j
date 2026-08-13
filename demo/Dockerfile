@@ -3,7 +3,7 @@ WORKDIR /workspace
 COPY . .
 RUN ./gradlew --no-daemon --max-workers=1 clean :test jar
 
-FROM neo4j:2026.06.0@sha256:ba2b859bdbe7017a9baa1a7b5681ac9732198753719b0a502e3645feddfdec72
+FROM neo4j:2026.06.0@sha256:42fd5b9ead4dd4211f6f91bd831c358e4e2117367d04633fbf88682ca4792b30
 LABEL org.opencontainers.image.title="Forward Neo4j reference integration" \
       org.opencontainers.image.source="https://github.com/forwardnetworks/forward-neo4j" \
       org.opencontainers.image.licenses="MIT"
