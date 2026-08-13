@@ -1,6 +1,6 @@
 plugins {
     application
-    id("org.cyclonedx.bom") version "3.3.0"
+    id("org.cyclonedx.bom") version "3.4.0"
 }
 
 group = rootProject.group
