@@ -1,4 +1,4 @@
-FROM gradle:9.6.1-jdk21@sha256:9795f8c9009a7de6adea522b907c9aadc38fe7c313874112c2b696c8e70b0303 AS build
+FROM gradle:9.7.1-jdk21@sha256:c0ce93e022ea2e705332dabe090019c749356576fc8fe39c38129b2aae9ed68f AS build
 WORKDIR /workspace
 COPY . .
 RUN ./gradlew --no-daemon --max-workers=1 clean :test jar
