@@ -1,8 +1,8 @@
 # Forward-to-Neo4j engineering handoff
 
-Status: `0.3.0` production release candidate
+Status: `0.4.0` production release
 
-Prepared: 2026-07-30
+Prepared: 2026-07-30; updated 2026-11-02 for 0.4.0
 
 ## Outcome
 
@@ -73,7 +73,11 @@ bulk crawl.
    or discover entitlement; Forward remains authoritative.
 9. **Business context is asserted.** Applications, ownership, criticality, device membership, and curated flows are
    operator-supplied. Check/CVE correlations use exact identities only.
-10. **Synthetic public evidence.** Demo data, graph screenshots, and feature catalog screenshots contain invented names
+10. **Recorded Predict snapshots are never published.** Automatic selection skips predicted snapshots and forks. An explicitly
+    named predicted snapshot is imported with `kind = 'PREDICTED'`, linked `PREDICTED_FROM` its base, never becomes the
+    candidate, and is refused by publication in both adapters. If Forward's snapshot list cannot be read when the
+    snapshot is first named, its kind stays unknown and it is treated as collected (fail-open, documented).
+11. **Synthetic public evidence.** Demo data, graph screenshots, and feature catalog screenshots contain invented names
     and documentation IP space only.
 
 ## Release gate
@@ -84,7 +88,7 @@ Run from a clean checkout with an isolated Gradle home if workstation init scrip
 GRADLE_USER_HOME=/tmp/forward-neo4j-gradle-home \
   ./gradlew --max-workers=1 clean :test jar cyclonedxDirectBom \
     :connector:test :connector:distTar :connector:distZip :connector:cyclonedxDirectBom
-jar tf build/libs/forward-neo4j-plugin-0.3.0.jar
+jar tf build/libs/forward-neo4j-plugin-0.4.0.jar
 docker build -f demo/Dockerfile -t forward-neo4j:verify .
 ```
 

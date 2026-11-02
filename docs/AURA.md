@@ -10,7 +10,7 @@ Release archives are named `forward-neo4j-connector-VERSION.tar` and `.zip`. To 
 
 ```bash
 ./gradlew :connector:test :connector:distTar :connector:distZip
-tar -xf connector/build/distributions/forward-neo4j-connector-0.3.0.tar
+tar -xf connector/build/distributions/forward-neo4j-connector-0.4.0.tar
 ```
 
 Use the generated launcher under `bin/forward-neo4j-connector`.

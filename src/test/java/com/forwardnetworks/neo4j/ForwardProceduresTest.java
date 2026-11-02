@@ -699,7 +699,11 @@ class ForwardProceduresTest {
                   {"id":"snapshot-base","state":"PROCESSED","processedAt":"2026-07-28T10:00:00Z",
                    "processingTrigger":"COLLECTION"},
                   {"id":"snapshot-predicted","state":"PROCESSED","processedAt":"2026-07-29T10:00:00Z",
-                   "processingTrigger":"PREDICT","parentSnapshotId":"snapshot-base","changeSetId":"cs-1"}
+                   "processingTrigger":"PREDICT","parentSnapshotId":"snapshot-base","changeSetId":"cs-1"},
+                  {"id":"snapshot-fork","state":"PROCESSED","processedAt":"2026-07-30T10:00:00Z",
+                   "processingTrigger":"COLLECTION","parentSnapshotId":"snapshot-base"},
+                  {"id":"snapshot-flagged","state":"PROCESSED","processedAt":"2026-07-31T10:00:00Z",
+                   "isPredicted":true}
                 ]}
                 """
             )
@@ -751,6 +755,12 @@ class ForwardProceduresTest {
                 ).execute()
             );
             assertTrue(refusal.getMessage().contains("Predict snapshot"), refusal.getMessage());
+            var status = driver.executableQuery(
+                "CALL forward.snapshot.status('network-1', 'snapshot-predicted')"
+            ).execute().records().getFirst();
+            assertEquals("PREDICTED", status.get("kind").asString());
+            assertEquals("snapshot-base", status.get("parentSnapshotId").asString());
+            assertEquals("cs-1", status.get("changeSetId").asString());
             driver.executableQuery("CALL forward.inventory.begin('network-1', 'snapshot-predicted')").execute();
             driver.executableQuery(
                 "CALL forward.import.submit('interfaces-v1', 'network-1', 'snapshot-predicted')"

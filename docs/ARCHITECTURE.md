@@ -55,6 +55,10 @@ imports one only when its ID is named explicitly, records `kind = 'PREDICTED'`, 
 never becomes the candidate or current snapshot and publication refuses it, so published history stays a record of
 observed state. Comparing a prediction with its base uses the same snapshot-scoped queries as any two snapshots.
 
+The marking comes from Forward's snapshot list. If that list cannot be read, or omits the snapshot, the first time a
+predicted snapshot ID is named explicitly, its kind stays unknown and it is treated like a collected snapshot. Once a
+snapshot is recorded as `PREDICTED`, later runs keep that marking even if the list is unavailable.
+
 ## API split
 
 | Domain | Source | Why |

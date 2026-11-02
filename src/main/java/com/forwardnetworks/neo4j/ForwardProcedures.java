@@ -1066,6 +1066,9 @@ public final class ForwardProcedures {
         public final String importedAt;
         public final String validatedAt;
         public final String publishedAt;
+        public final String kind;
+        public final String parentSnapshotId;
+        public final String changeSetId;
 
         SnapshotStatusResult(ImportJobManager.SnapshotState snapshot) {
             this.networkId = snapshot.networkId();
@@ -1079,6 +1082,9 @@ public final class ForwardProcedures {
             this.importedAt = snapshot.importedAt();
             this.validatedAt = snapshot.validatedAt();
             this.publishedAt = snapshot.publishedAt();
+            this.kind = snapshot.kind();
+            this.parentSnapshotId = snapshot.parentSnapshotId();
+            this.changeSetId = snapshot.changeSetId();
         }
     }
 

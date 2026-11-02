@@ -1,13 +1,15 @@
 # Changelog
 
-## Unreleased
+## 0.4.0 - 2026-11-02
 
-- Recognize Forward Predict snapshots: automatic snapshot selection now skips predicted snapshots and forks, as
-  Forward's own selection does, so a prediction can no longer be imported as the "latest" snapshot.
+- Recognize Forward Predict snapshots: automatic snapshot selection now skips predicted snapshots and forks (the
+  rule Forward's Go SDK uses for its latest-snapshot choice), so a prediction can no longer be imported as the "latest" snapshot.
 - Record `kind` (`PREDICTED` or `COLLECTED`), `parentSnapshotId`, and `changeSetId` on imported snapshots and link
   predicted snapshots to their base with `PREDICTED_FROM`. Predicted snapshots never become the candidate snapshot.
 - Refuse to publish a predicted snapshot in both the plugin and the connector. A predicted snapshot can be imported
-  only by naming its ID explicitly. If Forward's snapshot list is unavailable the kind stays unknown.
+  only by naming its ID explicitly. If Forward's snapshot list is unavailable when a
+  snapshot is first named, its kind stays unknown and it is treated as collected.
+- Report `kind`, `parentSnapshotId`, and `changeSetId` from `forward.snapshot.status`.
 
 ## 0.3.0 - 2026-07-30
 

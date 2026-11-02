@@ -17,7 +17,8 @@ stateDiagram-v2
 ```
 
 `ForwardNetwork.currentSnapshotId` changes only in `forward.snapshot.publish()`. Import procedures set
-`candidateSnapshotId` (except for Predict snapshots, which never become the candidate or current snapshot); they do not expose partially imported data as current.
+`candidateSnapshotId` (except for snapshots recorded as Predict snapshots, which never become the candidate or current snapshot; see
+[Architecture](ARCHITECTURE.md#predict-snapshots)); they do not expose partially imported data as current.
 
 Every selected component has one deterministic `ForwardImportJob` per network snapshot. Its state is one of
 `SUBMITTED`, `IMPORTING`, `VALIDATED`, or `FAILED`, with an attempt number, timestamps, imported row count, optional expected row

@@ -369,7 +369,7 @@ final class ImportJobManager {
                 snapshot.validatedComponents()
             );
         }
-        if (isPredicted(networkId, snapshotId)) {
+        if ("PREDICTED".equals(snapshot.kind())) {
             throw new IllegalStateException(
                 "Snapshot " + snapshotId + " is a Predict snapshot and can never become the current snapshot"
             );
@@ -424,18 +424,6 @@ final class ImportJobManager {
         );
     }
 
-    private boolean isPredicted(String networkId, String snapshotId) {
-        return Boolean.TRUE.equals(
-            one(
-                """
-                MATCH (snapshot:ForwardSnapshot {networkId: $networkId, id: $snapshotId})
-                RETURN coalesce(snapshot.kind = 'PREDICTED', false) AS predicted
-                """,
-                Map.of("networkId", networkId, "snapshotId", snapshotId)
-            ).get("predicted")
-        );
-    }
-
     SnapshotState snapshot(String networkId, String snapshotId) {
         Map<String, Object> row = one(
             """
@@ -449,7 +437,10 @@ final class ImportJobManager {
                    network.candidateSnapshotId AS candidateSnapshotId,
                    toString(snapshot.importedAt) AS importedAt,
                    toString(snapshot.validatedAt) AS validatedAt,
-                   toString(snapshot.publishedAt) AS publishedAt
+                   toString(snapshot.publishedAt) AS publishedAt,
+                   snapshot.kind AS kind,
+                   snapshot.parentSnapshotId AS parentSnapshotId,
+                   snapshot.changeSetId AS changeSetId
             """,
             Map.of("networkId", networkId, "snapshotId", snapshotId)
         );
@@ -464,7 +455,10 @@ final class ImportJobManager {
             nullableText(row, "candidateSnapshotId"),
             nullableText(row, "importedAt"),
             nullableText(row, "validatedAt"),
-            nullableText(row, "publishedAt")
+            nullableText(row, "publishedAt"),
+            nullableText(row, "kind"),
+            nullableText(row, "parentSnapshotId"),
+            nullableText(row, "changeSetId")
         );
     }
 
@@ -605,6 +599,9 @@ final class ImportJobManager {
         String candidateSnapshotId,
         String importedAt,
         String validatedAt,
-        String publishedAt
+        String publishedAt,
+        String kind,
+        String parentSnapshotId,
+        String changeSetId
     ) {}
 }
