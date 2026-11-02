@@ -53,7 +53,7 @@ The installer refuses broad target paths, verifies the downloaded release SHA-25
 point, and writes only the versioned archive under the selected `NEO4J_HOME/web` directory. Future package upgrades
 should be rechecked because an updated Arch recipe may begin shipping the upstream web archive directly.
 
-Build from source, or download `forward-neo4j-plugin-0.3.0.jar` from the GitHub release:
+Build from source, or download `forward-neo4j-plugin-0.4.0.jar` from the GitHub release:
 
 ```bash
 ./gradlew clean test jar
@@ -64,7 +64,7 @@ Install the plugin and user service:
 ```bash
 install -d -m 0700 ~/.local/state/forward-neo4j/plugins ~/.config/forward-neo4j
 install -d ~/.config/systemd/user
-deploy/install-plugin.sh build/libs/forward-neo4j-plugin-0.3.0.jar \
+deploy/install-plugin.sh build/libs/forward-neo4j-plugin-0.4.0.jar \
   ~/.local/state/forward-neo4j
 install -m 0644 deploy/neo4j.conf ~/.config/forward-neo4j/neo4j.conf
 install -m 0644 deploy/forward-neo4j.service ~/.config/systemd/user/forward-neo4j.service

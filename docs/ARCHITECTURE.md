@@ -46,6 +46,19 @@ All Forward-derived identities are snapshot-scoped. Stable operator context is n
 observations with an explicit snapshot identifier. `ForwardNetwork.currentSnapshotId` advances only after structural
 validation and explicit publication; it is not a reason to discard historical snapshots.
 
+## Predict snapshots
+
+A Forward Predict snapshot is an ordinary snapshot that describes a state the network was never in. It appears in
+the normal snapshot list with `processingTrigger: PREDICT`, a `parentSnapshotId`, and a `changeSetId`. The integration
+imports one only when its ID is named explicitly, records `kind = 'PREDICTED'`, and links it to its base snapshot with
+`(:ForwardSnapshot)-[:PREDICTED_FROM]->(:ForwardSnapshot)` when the base is already in the graph. A predicted snapshot
+never becomes the candidate or current snapshot and publication refuses it, so published history stays a record of
+observed state. Comparing a prediction with its base uses the same snapshot-scoped queries as any two snapshots.
+
+The marking comes from Forward's snapshot list. If that list cannot be read, or omits the snapshot, the first time a
+predicted snapshot ID is named explicitly, its kind stays unknown and it is treated like a collected snapshot. Once a
+snapshot is recorded as `PREDICTED`, later runs keep that marking even if the list is unavailable.
+
 ## API split
 
 | Domain | Source | Why |

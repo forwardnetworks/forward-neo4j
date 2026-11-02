@@ -38,7 +38,10 @@ final class ImportJobManager {
                 job.expectedRows = null,
                 snapshot.validationState = 'PENDING',
                 snapshot.publicationState = coalesce(snapshot.publicationState, 'STAGED'),
-                network.candidateSnapshotId = $snapshotId
+                network.candidateSnapshotId = CASE
+                  WHEN coalesce(snapshot.kind, '') = 'PREDICTED' THEN network.candidateSnapshotId
+                  ELSE $snapshotId
+                END
             MERGE (snapshot)-[:HAS_IMPORT_JOB]->(job)
             RETURN job.component AS component, job.state AS state, job.attempt AS attempt,
                    toString(job.submittedAt) AS submittedAt
@@ -89,7 +92,10 @@ final class ImportJobManager {
                 job.expectedRows = null,
                 snapshot.validationState = 'PENDING',
                 snapshot.publicationState = coalesce(snapshot.publicationState, 'STAGED'),
-                network.candidateSnapshotId = $snapshotId
+                network.candidateSnapshotId = CASE
+                  WHEN coalesce(snapshot.kind, '') = 'PREDICTED' THEN network.candidateSnapshotId
+                  ELSE $snapshotId
+                END
             MERGE (snapshot)-[:HAS_IMPORT_JOB]->(job)
             RETURN job.component AS component, job.state AS state, job.attempt AS attempt,
                    toString(job.submittedAt) AS submittedAt, toString(job.startedAt) AS startedAt
@@ -363,6 +369,11 @@ final class ImportJobManager {
                 snapshot.validatedComponents()
             );
         }
+        if ("PREDICTED".equals(snapshot.kind())) {
+            throw new IllegalStateException(
+                "Snapshot " + snapshotId + " is a Predict snapshot and can never become the current snapshot"
+            );
+        }
         if (!"VALIDATED".equals(snapshot.validationState())) {
             throw new IllegalStateException(
                 "Snapshot " + snapshotId + " must be VALIDATED before publication; current validation state is " +
@@ -426,7 +437,10 @@ final class ImportJobManager {
                    network.candidateSnapshotId AS candidateSnapshotId,
                    toString(snapshot.importedAt) AS importedAt,
                    toString(snapshot.validatedAt) AS validatedAt,
-                   toString(snapshot.publishedAt) AS publishedAt
+                   toString(snapshot.publishedAt) AS publishedAt,
+                   snapshot.kind AS kind,
+                   snapshot.parentSnapshotId AS parentSnapshotId,
+                   snapshot.changeSetId AS changeSetId
             """,
             Map.of("networkId", networkId, "snapshotId", snapshotId)
         );
@@ -441,7 +455,10 @@ final class ImportJobManager {
             nullableText(row, "candidateSnapshotId"),
             nullableText(row, "importedAt"),
             nullableText(row, "validatedAt"),
-            nullableText(row, "publishedAt")
+            nullableText(row, "publishedAt"),
+            nullableText(row, "kind"),
+            nullableText(row, "parentSnapshotId"),
+            nullableText(row, "changeSetId")
         );
     }
 
@@ -582,6 +599,9 @@ final class ImportJobManager {
         String candidateSnapshotId,
         String importedAt,
         String validatedAt,
-        String publishedAt
+        String publishedAt,
+        String kind,
+        String parentSnapshotId,
+        String changeSetId
     ) {}
 }

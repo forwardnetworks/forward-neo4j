@@ -57,7 +57,7 @@ Requirements: Java 21 and Neo4j Community 2026.06.x.
 ```bash
 ./gradlew clean test jar
 install -d ~/.local/state/forward-neo4j/plugins ~/.config/systemd/user ~/.config/forward-neo4j
-deploy/install-plugin.sh build/libs/forward-neo4j-plugin-0.3.0.jar \
+deploy/install-plugin.sh build/libs/forward-neo4j-plugin-0.4.0.jar \
   ~/.local/state/forward-neo4j
 install -m 0644 deploy/neo4j.conf ~/.config/forward-neo4j/neo4j.conf
 install -m 0644 deploy/forward-neo4j.service ~/.config/systemd/user/forward-neo4j.service
@@ -116,7 +116,7 @@ CALL forward.paths.stream($flows, $options, "network-id", "snapshot-id");
 
 `forward.testConnection()` makes a real `GET /api/networks` request but returns only sanitized booleans, counts, and
 duration. Empty network and snapshot arguments use the configured default network and the newest already-processed
-snapshot. The integration deliberately avoids an endpoint that could trigger processing.
+collected snapshot; Forward Predict snapshots and other forks are never chosen automatically. The integration deliberately avoids an endpoint that could trigger processing.
 
 ## License-aware feature selection
 
