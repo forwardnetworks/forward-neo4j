@@ -101,7 +101,7 @@ final class ForwardApiClient {
 
     SnapshotData selectSnapshot(String networkId, String requestedSnapshotId) {
         if (requestedSnapshotId != null && !requestedSnapshotId.isBlank()) {
-            return new SnapshotData(requestedSnapshotId, null, null);
+            return lookupSnapshot(networkId, requestedSnapshotId);
         }
 
         JsonNode response = get(
@@ -111,16 +111,56 @@ final class ForwardApiClient {
         if (!snapshots.isArray() || snapshots.isEmpty()) {
             throw new ForwardApiException("Network has no processed snapshots");
         }
+        // Like Forward's own automatic snapshot choice, never land on a Predict snapshot or other fork.
         return stream(snapshots)
-            .map(node ->
-                new SnapshotData(
-                    requiredText(node, "id"),
-                    optionalText(node, "createdAt"),
-                    optionalText(node, "processedAt")
-                )
-            )
+            .map(ForwardApiClient::snapshotData)
+            .filter(snapshot -> !snapshot.predicted() && snapshot.parentSnapshotId() == null)
             .max(Comparator.comparing(ForwardApiClient::snapshotSortInstant))
-            .orElseThrow();
+            .orElseThrow(() ->
+                new ForwardApiException(
+                    "Network has no processed collected snapshots; name a Predict snapshot explicitly to import it"
+                )
+            );
+    }
+
+    /**
+     * Best-effort metadata for an explicitly requested snapshot. When the snapshot list is unavailable or does not
+     * contain the snapshot the kind stays unknown (null) and the import proceeds as before.
+     */
+    private SnapshotData lookupSnapshot(String networkId, String snapshotId) {
+        try {
+            JsonNode snapshots = get("/api/networks/" + segment(networkId) + "/snapshots").path("snapshots");
+            if (snapshots.isArray()) {
+                for (JsonNode node : snapshots) {
+                    if (snapshotId.equals(optionalText(node, "id"))) {
+                        return snapshotData(node);
+                    }
+                }
+            }
+        } catch (ForwardApiException ignored) {
+            // metadata is advisory; the requested ID is authoritative
+        }
+        return new SnapshotData(snapshotId, null, null, null, null, null);
+    }
+
+    private static SnapshotData snapshotData(JsonNode node) {
+        String parent = blankToNull(optionalText(node, "parentSnapshotId"));
+        String changeSet = blankToNull(optionalText(node, "changeSetId"));
+        boolean predicted = "PREDICT".equalsIgnoreCase(optionalText(node, "processingTrigger")) ||
+            node.path("isPredicted").asBoolean(false) ||
+            changeSet != null;
+        return new SnapshotData(
+            requiredText(node, "id"),
+            optionalText(node, "createdAt"),
+            optionalText(node, "processedAt"),
+            predicted ? "PREDICTED" : "COLLECTED",
+            parent,
+            changeSet
+        );
+    }
+
+    private static String blankToNull(String value) {
+        return value == null || value.isBlank() ? null : value;
     }
 
     List<DeviceData> getDevices(String networkId, String snapshotId) {
@@ -626,7 +666,19 @@ final class ForwardApiClient {
 
     record ConnectionData(long accessibleNetworks, boolean defaultNetworkConfigured, boolean defaultNetworkVisible) {}
 
-    record SnapshotData(String id, String createdAt, String processedAt) {}
+    /** {@code kind} is PREDICTED, COLLECTED, or null when Forward metadata was unavailable. */
+    record SnapshotData(
+        String id,
+        String createdAt,
+        String processedAt,
+        String kind,
+        String parentSnapshotId,
+        String changeSetId
+    ) {
+        boolean predicted() {
+            return "PREDICTED".equals(kind);
+        }
+    }
 
     record DeviceData(
         String name,

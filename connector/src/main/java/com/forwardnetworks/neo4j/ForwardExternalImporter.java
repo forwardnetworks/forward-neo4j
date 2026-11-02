@@ -193,6 +193,11 @@ final class ForwardExternalImporter {
     ImportSummary importLatest(String requestedNetworkId, String requestedSnapshotId, boolean publish) {
         String networkId = config.resolveNetworkId(requestedNetworkId);
         var snapshot = client.selectSnapshot(networkId, requestedSnapshotId);
+        if (publish && snapshot.predicted()) {
+            throw new IllegalStateException(
+                "Snapshot " + snapshot.id() + " is a Predict snapshot and can never become the current snapshot"
+            );
+        }
         installSchema();
         stage(networkId, snapshot);
 
@@ -309,14 +314,26 @@ final class ForwardExternalImporter {
             MERGE (network:ForwardNetwork {id: $networkId})
             MERGE (snapshot:ForwardSnapshot {networkId: $networkId, id: $snapshotId})
             SET snapshot.createdAt = $createdAt, snapshot.processedAt = $processedAt,
+                snapshot.kind = coalesce($kind, snapshot.kind),
+                snapshot.parentSnapshotId = coalesce($parentSnapshotId, snapshot.parentSnapshotId),
+                snapshot.changeSetId = coalesce($changeSetId, snapshot.changeSetId),
                 snapshot.importedAt = datetime(), snapshot.publicationState = coalesce(snapshot.publicationState, 'STAGED'),
                 snapshot.validationState = 'PENDING'
             MERGE (network)-[:HAS_SNAPSHOT]->(snapshot)
-            SET network.candidateSnapshotId = $snapshotId
+            FOREACH (_ IN CASE WHEN snapshot.kind = 'PREDICTED' THEN [] ELSE [1] END |
+              SET network.candidateSnapshotId = $snapshotId
+            )
+            WITH snapshot
+            OPTIONAL MATCH (parent:ForwardSnapshot {networkId: $networkId, id: snapshot.parentSnapshotId})
+            FOREACH (_ IN CASE WHEN snapshot.kind = 'PREDICTED' AND parent IS NOT NULL THEN [1] ELSE [] END |
+              MERGE (snapshot)-[:PREDICTED_FROM]->(parent)
+            )
             """,
             values(
                 "networkId", networkId, "snapshotId", snapshot.id(),
-                "createdAt", snapshot.createdAt(), "processedAt", snapshot.processedAt()
+                "createdAt", snapshot.createdAt(), "processedAt", snapshot.processedAt(),
+                "kind", snapshot.kind(), "parentSnapshotId", snapshot.parentSnapshotId(),
+                "changeSetId", snapshot.changeSetId()
             )
         );
     }
@@ -393,9 +410,10 @@ final class ForwardExternalImporter {
     }
 
     private void publish(String networkId, String snapshotId) {
-        run("""
+        var published = records("""
             MATCH (network:ForwardNetwork {id: $networkId})
             MATCH (snapshot:ForwardSnapshot {networkId: $networkId, id: $snapshotId, validationState: 'VALIDATED'})
+            WHERE coalesce(snapshot.kind, '') <> 'PREDICTED'
             OPTIONAL MATCH (previous:ForwardSnapshot {networkId: $networkId, id: network.currentSnapshotId})
             WITH network, snapshot, previous, network.currentSnapshotId AS previousSnapshotId
             FOREACH (_ IN CASE WHEN previous IS NOT NULL AND previous.id <> snapshot.id THEN [1] ELSE [] END |
@@ -405,7 +423,13 @@ final class ForwardExternalImporter {
                 network.currentSnapshotId = $snapshotId, network.publishedAt = datetime(),
                 snapshot.publicationState = 'PUBLISHED', snapshot.publishedAt = datetime()
             REMOVE network.candidateSnapshotId
+            RETURN snapshot.id AS id
             """, values("networkId", networkId, "snapshotId", snapshotId));
+        if (published.isEmpty()) {
+            throw new IllegalStateException(
+                "Snapshot " + snapshotId + " was not published: it is not VALIDATED or is a Predict snapshot"
+            );
+        }
     }
 
     private <T> long writeBatches(

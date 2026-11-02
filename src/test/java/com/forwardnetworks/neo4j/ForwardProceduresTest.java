@@ -685,6 +685,93 @@ class ForwardProceduresTest {
     }
 
     @Test
+    void automaticSelectionSkipsPredictedSnapshotsAndExplicitImportIsMarkedAndNeverPublishable()
+        throws IOException {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        String auth = "Basic " + Base64.getEncoder()
+            .encodeToString("demo-user:demo-password".getBytes(StandardCharsets.UTF_8));
+        server.createContext("/api/networks/network-1/snapshots", exchange ->
+            respond(
+                exchange,
+                auth,
+                """
+                {"snapshots":[
+                  {"id":"snapshot-base","state":"PROCESSED","processedAt":"2026-07-28T10:00:00Z",
+                   "processingTrigger":"COLLECTION"},
+                  {"id":"snapshot-predicted","state":"PROCESSED","processedAt":"2026-07-29T10:00:00Z",
+                   "processingTrigger":"PREDICT","parentSnapshotId":"snapshot-base","changeSetId":"cs-1"}
+                ]}
+                """
+            )
+        );
+        server.createContext("/api/networks/network-1/devices", exchange ->
+            respond(exchange, auth, "[{\"name\":\"router-a\",\"type\":\"ROUTER\"}]")
+        );
+        server.createContext("/api/snapshots/snapshot-base/topology", exchange -> respond(exchange, auth, "[]"));
+        server.createContext("/api/snapshots/snapshot-predicted/topology", exchange -> respond(exchange, auth, "[]"));
+        server.start();
+
+        System.setProperty("forward.url", "http://127.0.0.1:" + server.getAddress().getPort());
+        System.setProperty("forward.username", "demo-user");
+        System.setProperty("forward.password", "demo-password");
+        try (
+            Neo4j neo4j = Neo4jBuilders.newInProcessBuilder()
+                .withDisabledServer()
+                .withProcedure(ForwardProcedures.class)
+                .build();
+            var driver = org.neo4j.driver.GraphDatabase.driver(neo4j.boltURI())
+        ) {
+            driver.executableQuery("CALL forward.schema.install()").execute();
+            var automatic = driver.executableQuery("CALL forward.import.snapshot('network-1', '')")
+                .execute().records().getFirst();
+            assertEquals("snapshot-base", automatic.get("snapshotId").asString());
+
+            driver.executableQuery("CALL forward.import.snapshot('network-1', 'snapshot-predicted')").execute();
+            var predicted = driver.executableQuery(
+                """
+                MATCH (s:ForwardSnapshot {networkId: 'network-1', id: 'snapshot-predicted'})
+                OPTIONAL MATCH (s)-[:PREDICTED_FROM]->(base:ForwardSnapshot)
+                MATCH (n:ForwardNetwork {id: 'network-1'})
+                RETURN s.kind AS kind, s.changeSetId AS changeSetId, base.id AS base,
+                       n.candidateSnapshotId AS candidate
+                """
+            ).execute().records().getFirst();
+            assertEquals("PREDICTED", predicted.get("kind").asString());
+            assertEquals("cs-1", predicted.get("changeSetId").asString());
+            assertEquals("snapshot-base", predicted.get("base").asString());
+            assertEquals("snapshot-base", predicted.get("candidate").asString());
+
+            driver.executableQuery(
+                "CALL forward.snapshot.validate('network-1', 'snapshot-predicted', [])"
+            ).execute();
+            var refusal = assertThrows(
+                Exception.class,
+                () -> driver.executableQuery(
+                    "CALL forward.snapshot.publish('network-1', 'snapshot-predicted')"
+                ).execute()
+            );
+            assertTrue(refusal.getMessage().contains("Predict snapshot"), refusal.getMessage());
+            driver.executableQuery("CALL forward.inventory.begin('network-1', 'snapshot-predicted')").execute();
+            driver.executableQuery(
+                "CALL forward.import.submit('interfaces-v1', 'network-1', 'snapshot-predicted')"
+            ).execute();
+            driver.executableQuery(
+                "CALL forward.import.begin('interfaces-v1', 'network-1', 'snapshot-predicted')"
+            ).execute();
+            var candidateAfterJobs = driver.executableQuery(
+                "MATCH (n:ForwardNetwork {id: 'network-1'}) RETURN n.candidateSnapshotId AS candidate"
+            ).execute().records().getFirst();
+            assertEquals("snapshot-base", candidateAfterJobs.get("candidate").asString());
+            var current = driver.executableQuery(
+                "MATCH (n:ForwardNetwork {id: 'network-1'}) RETURN n.currentSnapshotId AS current"
+            ).execute().records().getFirst();
+            assertTrue(current.get("current").isNull());
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
     void importsLatestProcessedSnapshotWithReadOnlyRequests() throws IOException {
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         String expectedAuthorization = "Basic " + Base64.getEncoder()

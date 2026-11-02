@@ -137,11 +137,21 @@ final class SnapshotImporter {
             MERGE (snapshot:ForwardSnapshot {networkId: $networkId, id: $snapshotId})
             SET snapshot.createdAt = $createdAt,
                 snapshot.processedAt = $processedAt,
+                snapshot.kind = coalesce($kind, snapshot.kind),
+                snapshot.parentSnapshotId = coalesce($parentSnapshotId, snapshot.parentSnapshotId),
+                snapshot.changeSetId = coalesce($changeSetId, snapshot.changeSetId),
                 snapshot.importedAt = datetime(),
                 snapshot.publicationState = coalesce(snapshot.publicationState, 'STAGED'),
                 snapshot.validationState = 'PENDING'
             MERGE (network)-[:HAS_SNAPSHOT]->(snapshot)
-            SET network.candidateSnapshotId = $snapshotId
+            FOREACH (_ IN CASE WHEN snapshot.kind = 'PREDICTED' THEN [] ELSE [1] END |
+              SET network.candidateSnapshotId = $snapshotId
+            )
+            WITH snapshot
+            OPTIONAL MATCH (parent:ForwardSnapshot {networkId: $networkId, id: snapshot.parentSnapshotId})
+            FOREACH (_ IN CASE WHEN snapshot.kind = 'PREDICTED' AND parent IS NOT NULL THEN [1] ELSE [] END |
+              MERGE (snapshot)-[:PREDICTED_FROM]->(parent)
+            )
             """,
             properties(
                 "networkId",
@@ -151,7 +161,13 @@ final class SnapshotImporter {
                 "createdAt",
                 snapshot.createdAt(),
                 "processedAt",
-                snapshot.processedAt()
+                snapshot.processedAt(),
+                "kind",
+                snapshot.kind(),
+                "parentSnapshotId",
+                snapshot.parentSnapshotId(),
+                "changeSetId",
+                snapshot.changeSetId()
             )
         );
     }

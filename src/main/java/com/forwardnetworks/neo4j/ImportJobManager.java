@@ -38,7 +38,10 @@ final class ImportJobManager {
                 job.expectedRows = null,
                 snapshot.validationState = 'PENDING',
                 snapshot.publicationState = coalesce(snapshot.publicationState, 'STAGED'),
-                network.candidateSnapshotId = $snapshotId
+                network.candidateSnapshotId = CASE
+                  WHEN coalesce(snapshot.kind, '') = 'PREDICTED' THEN network.candidateSnapshotId
+                  ELSE $snapshotId
+                END
             MERGE (snapshot)-[:HAS_IMPORT_JOB]->(job)
             RETURN job.component AS component, job.state AS state, job.attempt AS attempt,
                    toString(job.submittedAt) AS submittedAt
@@ -89,7 +92,10 @@ final class ImportJobManager {
                 job.expectedRows = null,
                 snapshot.validationState = 'PENDING',
                 snapshot.publicationState = coalesce(snapshot.publicationState, 'STAGED'),
-                network.candidateSnapshotId = $snapshotId
+                network.candidateSnapshotId = CASE
+                  WHEN coalesce(snapshot.kind, '') = 'PREDICTED' THEN network.candidateSnapshotId
+                  ELSE $snapshotId
+                END
             MERGE (snapshot)-[:HAS_IMPORT_JOB]->(job)
             RETURN job.component AS component, job.state AS state, job.attempt AS attempt,
                    toString(job.submittedAt) AS submittedAt, toString(job.startedAt) AS startedAt
@@ -363,6 +369,11 @@ final class ImportJobManager {
                 snapshot.validatedComponents()
             );
         }
+        if (isPredicted(networkId, snapshotId)) {
+            throw new IllegalStateException(
+                "Snapshot " + snapshotId + " is a Predict snapshot and can never become the current snapshot"
+            );
+        }
         if (!"VALIDATED".equals(snapshot.validationState())) {
             throw new IllegalStateException(
                 "Snapshot " + snapshotId + " must be VALIDATED before publication; current validation state is " +
@@ -410,6 +421,18 @@ final class ImportJobManager {
             nullableText(row, "previousSnapshotId"),
             text(row, "publishedAt"),
             stringList(row.get("components"))
+        );
+    }
+
+    private boolean isPredicted(String networkId, String snapshotId) {
+        return Boolean.TRUE.equals(
+            one(
+                """
+                MATCH (snapshot:ForwardSnapshot {networkId: $networkId, id: $snapshotId})
+                RETURN coalesce(snapshot.kind = 'PREDICTED', false) AS predicted
+                """,
+                Map.of("networkId", networkId, "snapshotId", snapshotId)
+            ).get("predicted")
         );
     }
 
