@@ -6,7 +6,7 @@ plugins {
 group = "com.forwardnetworks.neo4j"
 version = "0.4.0"
 
-val neo4jVersion = "2026.06.0"
+val neo4jVersion = "2026.07.1"
 
 java {
     toolchain {
