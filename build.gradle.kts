@@ -1,6 +1,6 @@
 plugins {
     java
-    id("org.cyclonedx.bom") version "3.3.0"
+    id("org.cyclonedx.bom") version "3.4.0"
 }
 
 group = "com.forwardnetworks.neo4j"
